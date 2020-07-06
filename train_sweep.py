@@ -113,7 +113,7 @@ def _unfreeze_and_add_param_group(module: Module,
          })
 
 
-wandb.login(key=44b74d6614becfad4329893ea0144da65336bdbd)
+wandb.login(key='44b74d6614becfad4329893ea0144da65336bdbd')
 
 # Sweep parameters
 hyperparameter_defaults = dict(
@@ -133,9 +133,8 @@ config = wandb.config
 class Cars(LightningModule):
 
     def __init__(self, 
-                hparams)
+                hparams):
         super().__init__()
-        self.hparams = hparams
         self.backbone = hparams.backbone
         self.train_bn = hparams.train_bn
         self.batch_size = hparams.batch_size
@@ -148,7 +147,7 @@ class Cars(LightningModule):
     def __build_model(self):
         num_target_classes = 196
         model_func = getattr(models, self.backbone)
-        backbone = model_func(pretrained=True, num_classes = num_target_classes)
+        backbone = model_func(pretrained=True)
     
         _layers = list(backbone.children())[:-1]
         self.feature_extractor = nn.Sequential(*_layers)
@@ -171,17 +170,17 @@ class Cars(LightningModule):
         # 1. Forward pass:
         x, y = batch
         y_logits = self.forward(x)
-        y_true = y.view((-1, 1)).type_as(x)
-        y_bin = torch.ge(y_logits, 0)
+        #y_true = y.view((-1, 1)).type_as(x)
+        #y_bin = torch.ge(y_logits, 0)
 
         # 2. Compute loss & accuracy:
-        train_loss = F.cross_entropy(y_logits, y_true)
-        num_correct = torch.eq(y_bin.view(-1), y_true.view(-1)).sum()
+        train_loss = F.cross_entropy(y_logits, y)#y_true)
+        #num_correct = torch.eq(y_bin.view(-1), y).sum()#y_true.view(-1)).sum()
 
         # 3. Outputs:
         tqdm_dict = {'train_loss': train_loss}
         output = OrderedDict({'loss': train_loss,
-                              'num_correct': num_correct,
+                              #'num_correct': num_correct,
                               'log': tqdm_dict,
                               'progress_bar': tqdm_dict})
 
@@ -192,10 +191,10 @@ class Cars(LightningModule):
 
         train_loss_mean = torch.stack([output['loss']
                                        for output in outputs]).mean()
-        train_acc_mean = torch.stack([output['num_correct']
-                                      for output in outputs]).sum().float()
-        train_acc_mean /= (len(outputs) * self.batch_size)
-        tensorboard_logs = {'train_loss': train_loss_mean, 'train_acc': train_acc_mean}
+        #train_acc_mean = torch.stack([output['num_correct']
+        #                              for output in outputs]).sum().float()
+        #train_acc_mean /= (len(outputs) * self.batch_size)
+        tensorboard_logs = {'train_loss': train_loss_mean}#, 'train_acc': train_acc_mean}
         return {'train_loss': train_loss_mean,  'log': tensorboard_logs}
         #return {'log': {'train_loss': train_loss_mean,
         #                'train_acc': train_acc_mean,
@@ -206,25 +205,26 @@ class Cars(LightningModule):
         # 1. Forward pass:
         x, y = batch
         y_logits = self.forward(x)
-        y_true = y.view((-1, 1)).type_as(x)
-        y_bin = torch.ge(y_logits, 0)
+        #y_true = y.view((-1, 1)).type_as(x)
+        #y_bin = torch.ge(y_logits, 0)
 
         # 2. Compute loss & accuracy:
-        val_loss = F.cross_entropy(y_logits, y_true)
-        num_correct = torch.eq(y_bin.view(-1), y_true.view(-1)).sum()
+        val_loss = F.cross_entropy(y_logits, y)
+        #acc = accuracy(y_logits, y)#y_true)
+        #num_correct = torch.eq(y_bin.view(-1), y).sum()#y_true.view(-1)).sum()
 
         return {'val_loss': val_loss,
-                'num_correct': num_correct}
+               }#'num_correct': num_correct}
 
     def validation_epoch_end(self, outputs):
         """Compute and log validation loss and accuracy at the epoch level."""
 
         val_loss_mean = torch.stack([output['val_loss']
                                      for output in outputs]).mean()
-        val_acc_mean = torch.stack([output['num_correct']
-                                    for output in outputs]).sum().float()
-        val_acc_mean /= (len(outputs) * self.batch_size)
-        tensorboard_logs = {'val_loss': val_loss_mean, 'val_acc': val_acc_mean}
+        #val_acc_mean = torch.stack([output['num_correct']
+        #                            for output in outputs]).sum().float()
+        #val_acc_mean /= (len(outputs) * self.batch_size)
+        tensorboard_logs = {'val_loss': val_loss_mean,}# 'val_acc': val_acc_mean}
         return {'val_loss': val_loss_mean,  'log': tensorboard_logs}
         #return {'log': {'val_loss': val_loss_mean,
         #                'val_acc': val_acc_mean,
@@ -292,7 +292,7 @@ def main(hparams):
     # ------------------------
     # 2 SET WANDB LOGGER
     # ------------------------
-    wandb_logger = WandbLogger()
+    wandb_logger = WandbLogger(name='Test1',project='Cars')
 
     # ------------------------
     # 3 INIT TRAINER
@@ -301,7 +301,7 @@ def main(hparams):
         gpus=hparams.gpus,
         logger=wandb_logger,
         max_epochs=hparams.epochs,
-        precision=16
+        progress_bar_refresh_rate=20
     )
 
     # ------------------------
