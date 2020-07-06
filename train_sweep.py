@@ -120,11 +120,11 @@ hyperparameter_defaults = dict(
     backbone='resnet50',
     train_bn = True,
     gpus=1,
-    batch_size = 8,
+    batch_size = 24,
     lr = 1e-2,
     #lr_scheduler_gamma: float = 1e-1,
     epochs = 5,
-    num_workers = 2
+    num_workers = 4
 )
 
 wandb.init(config=hyperparameter_defaults)
@@ -153,7 +153,9 @@ class Cars(LightningModule):
         self.feature_extractor = nn.Sequential(*_layers)
         freeze(module=self.feature_extractor, train_bn=self.train_bn)
 
-        _fc_layers = [nn.Linear(2048, num_target_classes)]
+        _fc_layers = [nn.Linear(2048, 1024),
+                     nn.Linear(1024, 512),
+                     nn.Linear(512, num_target_classes)]
         self.fc = nn.Sequential(*_fc_layers)
 
     def forward(self, x):
@@ -170,17 +172,15 @@ class Cars(LightningModule):
         # 1. Forward pass:
         x, y = batch
         y_logits = self.forward(x)
-        #y_true = y.view((-1, 1)).type_as(x)
-        #y_bin = torch.ge(y_logits, 0)
 
         # 2. Compute loss & accuracy:
-        train_loss = F.cross_entropy(y_logits, y)#y_true)
-        #num_correct = torch.eq(y_bin.view(-1), y).sum()#y_true.view(-1)).sum()
+        train_loss = F.cross_entropy(y_logits, y)
+        acc = accuracy(y_logits, y)
 
         # 3. Outputs:
         tqdm_dict = {'train_loss': train_loss}
         output = OrderedDict({'loss': train_loss,
-                              #'num_correct': num_correct,
+                               'train_acc': acc,
                               'log': tqdm_dict,
                               'progress_bar': tqdm_dict})
 
@@ -191,10 +191,9 @@ class Cars(LightningModule):
 
         train_loss_mean = torch.stack([output['loss']
                                        for output in outputs]).mean()
-        #train_acc_mean = torch.stack([output['num_correct']
-        #                              for output in outputs]).sum().float()
-        #train_acc_mean /= (len(outputs) * self.batch_size)
-        tensorboard_logs = {'train_loss': train_loss_mean}#, 'train_acc': train_acc_mean}
+        avg_acc = torch.stack([x['train_acc'] for x in outputs]).mean()
+        
+        tensorboard_logs = {'train_loss': train_loss_mean, 'train_acc': avg_acc}
         return {'train_loss': train_loss_mean,  'log': tensorboard_logs}
         #return {'log': {'train_loss': train_loss_mean,
         #                'train_acc': train_acc_mean,
@@ -205,15 +204,12 @@ class Cars(LightningModule):
         # 1. Forward pass:
         x, y = batch
         y_logits = self.forward(x)
-        #y_true = y.view((-1, 1)).type_as(x)
-        #y_bin = torch.ge(y_logits, 0)
 
         # 2. Compute loss & accuracy:
         val_loss = F.cross_entropy(y_logits, y)
-        #acc = accuracy(y_logits, y)#y_true)
-        #num_correct = torch.eq(y_bin.view(-1), y).sum()#y_true.view(-1)).sum()
+        acc = accuracy(y_logits, y)#y_true)
 
-        return {'val_loss': val_loss,
+        return {'val_loss': val_loss, 'val_acc': acc
                }#'num_correct': num_correct}
 
     def validation_epoch_end(self, outputs):
@@ -221,10 +217,9 @@ class Cars(LightningModule):
 
         val_loss_mean = torch.stack([output['val_loss']
                                      for output in outputs]).mean()
-        #val_acc_mean = torch.stack([output['num_correct']
-        #                            for output in outputs]).sum().float()
-        #val_acc_mean /= (len(outputs) * self.batch_size)
-        tensorboard_logs = {'val_loss': val_loss_mean,}# 'val_acc': val_acc_mean}
+        avg_acc = torch.stack([x['val_acc'] for x in outputs]).mean()
+        
+        tensorboard_logs = {'val_loss': val_loss_mean, 'val_acc': avg_acc}
         return {'val_loss': val_loss_mean,  'log': tensorboard_logs}
         #return {'log': {'val_loss': val_loss_mean,
         #                'val_acc': val_acc_mean,
@@ -287,12 +282,13 @@ def main(hparams):
     # ------------------------
     # 1 INIT LIGHTNING MODEL
     # ------------------------
+    seed_everything(42)
     model = Cars(hparams)
 
     # ------------------------
     # 2 SET WANDB LOGGER
     # ------------------------
-    wandb_logger = WandbLogger(name='Test1',project='Cars')
+    wandb_logger = WandbLogger(name='Test6',project='Cars')
 
     # ------------------------
     # 3 INIT TRAINER
@@ -301,7 +297,8 @@ def main(hparams):
         gpus=hparams.gpus,
         logger=wandb_logger,
         max_epochs=hparams.epochs,
-        progress_bar_refresh_rate=20
+        progress_bar_refresh_rate=30,
+        deterministic=True
     )
 
     # ------------------------
