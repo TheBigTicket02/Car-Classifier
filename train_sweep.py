@@ -120,10 +120,10 @@ hyperparameter_defaults = dict(
     backbone='resnet50',
     train_bn = True,
     gpus=1,
-    batch_size = 24,
-    lr = 1e-2,
+    batch_size = 40,
+    lr = 3e-3,
     #lr_scheduler_gamma: float = 1e-1,
-    epochs = 5,
+    epochs = 10,
     num_workers = 4
 )
 
