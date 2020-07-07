@@ -13,7 +13,6 @@ from torch.optim.lr_scheduler import OneCycleLR
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping, LearningRateLogger
 from pytorch_lightning.loggers import WandbLogger
 from torch import optim
-#from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torchvision import models, transforms
 from torch.utils.data import DataLoader, random_split
 from torchvision.datasets import ImageFolder
@@ -116,33 +115,32 @@ def _unfreeze_and_add_param_group(module: Module,
 
 wandb.login(key='44b74d6614becfad4329893ea0144da65336bdbd')
 
-class Cars(LightningModule):
+class ResNet50(LightningModule):
 
     def __init__(self, 
-                backbone: str = 'resnet50',
                 train_bn: bool = True,
                 batch_size: int = 70,
                 lr: float = 1e-3,
                 num_workers: int = 4,
                 pct_start: Optional[float] = None,
-                anneal_strategy: Optional[str] = None,
+                anneal_strategy: Optional[str] = None
+                steps: Optional[int] = None,
                 **kwargs):
         super().__init__()
-        self.backbone = backbone
         self.train_bn = train_bn
         self.batch_size = batch_size
         self.lr = lr
         self.num_workers = num_workers
         self.pct_start = pct_start
         self.anneal_strategy = anneal_strategy
+        self.steps = steps
         self.save_hyperparameters()
 
         self.__build_model()
         
     def __build_model(self):
         num_target_classes = 196
-        model_func = getattr(models, self.backbone)
-        backbone = model_func(pretrained=True)
+        backbone = models.resnet50(pretrained=True)
     
         _layers = list(backbone.children())[:-1]
         self.feature_extractor = nn.Sequential(*_layers)
@@ -162,7 +160,6 @@ class Cars(LightningModule):
 
         return x
     
-
     def training_step(self, batch, batch_idx):
 
         # 1. Forward pass:
@@ -238,7 +235,7 @@ class Cars(LightningModule):
             
             scheduler = OneCycleLR(optimizer,
                             max_lr=self.lr,
-                            epochs=10, steps_per_epoch=int(len(self.train_dataset)/self.batch_size),
+                            steps = self.steps,
                             pct_start=self.pct_start, anneal_strategy=self.anneal_strategy)
 
         return [optimizer], [scheduler]
@@ -284,12 +281,16 @@ class Cars(LightningModule):
                             shuffle=False,
                             pin_memory=True)
 
+    #def any_lightning_module_function_or_hook(self):
+    #self.logger.experiment.log_hyperparams(params)
+
+
 def main():
     # ------------------------
     # 1 INIT LIGHTNING MODEL
     # ------------------------
     seed_everything(42)
-    model = Cars()
+    model = ResNet50()
 
     # ------------------------
     # 2 SET WANDB LOGGER
@@ -303,7 +304,6 @@ def main():
     
     #wandb_logger.experiment.init(config=hyperparameter_defaults, name = 'Test8', project="Cars")
     #config = wandb_logger.experiment.config
-    #wandb_logger.log_hyperparams(default)
 
     checkpoint_cb = ModelCheckpoint(filepath = './cars-{epoch:02d}-{val_acc:.4f}',monitor='val_acc', mode='max')
     early = EarlyStopping(patience=2, monitor='val_acc', mode='max')
@@ -322,6 +322,20 @@ def main():
         #callbacks=[LearningRateLogger()],
     )
 
+    # ------------------------
+    # 5 START TRAINING
+    # ------------------------
+    trainer.fit(model)
+    
+    wandb.save(checkpoint_cb.best_model_path)
+    
+    model.unfreeze()
+    model.anneal_strategy = 'cos'
+    model.pct_start = 0.3
+    model.lr = 1e-4
+    
+    wandb_logger = WandbLogger(name='Fine1', project="Cars")
+    
     # ------------------------
     # 5 START TRAINING
     # ------------------------
