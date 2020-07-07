@@ -5,7 +5,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-import pytorch_lightning as pl
 from pytorch_lightning.core.lightning import LightningModule
 from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning.metrics.functional.classification import accuracy
@@ -80,39 +79,6 @@ def freeze(module: Module,
         _make_trainable(module=child)
 
 
-def filter_params(module: Module,
-                  train_bn: bool = True) -> Generator:
-    """Yields the trainable parameters of a given module.
-    Args:
-        module: A given module
-        train_bn: If True, leave the BatchNorm layers in training mode
-    Returns:
-        Generator
-    """
-    children = list(module.children())
-    if not children:
-        if not (isinstance(module, BN_TYPES) and train_bn):
-            for param in module.parameters():
-                if param.requires_grad:
-                    yield param
-    else:
-        for child in children:
-            for param in filter_params(module=child, train_bn=train_bn):
-                yield param
-
-
-def _unfreeze_and_add_param_group(module: Module,
-                                  optimizer: Optimizer,
-                                  lr: Optional[float] = None,
-                                  train_bn: bool = True):
-    """Unfreezes a module and adds its parameters to an optimizer."""
-    _make_trainable(module)
-    params_lr = optimizer.param_groups[0]['lr'] if lr is None else float(lr)
-    optimizer.add_param_group(
-        {'params': filter_params(module=module, train_bn=train_bn),
-         'lr': params_lr / 10.,
-         })
-
 wandb.login(key='44b74d6614becfad4329893ea0144da65336bdbd')
 
 class ResNet50(LightningModule):
@@ -123,8 +89,7 @@ class ResNet50(LightningModule):
                 lr: float = 1e-3,
                 num_workers: int = 4,
                 pct_start: Optional[float] = None,
-                anneal_strategy: Optional[str] = None
-                steps: Optional[int] = None,
+                anneal_strategy: Optional[str] = None,
                 **kwargs):
         super().__init__()
         self.train_bn = train_bn
@@ -133,7 +98,6 @@ class ResNet50(LightningModule):
         self.num_workers = num_workers
         self.pct_start = pct_start
         self.anneal_strategy = anneal_strategy
-        self.steps = steps
         self.save_hyperparameters()
 
         self.__build_model()
@@ -235,7 +199,7 @@ class ResNet50(LightningModule):
             
             scheduler = OneCycleLR(optimizer,
                             max_lr=self.lr,
-                            steps = self.steps,
+                            epochs=15, steps_per_epoch=1,
                             pct_start=self.pct_start, anneal_strategy=self.anneal_strategy)
 
         return [optimizer], [scheduler]
@@ -281,8 +245,6 @@ class ResNet50(LightningModule):
                             shuffle=False,
                             pin_memory=True)
 
-    #def any_lightning_module_function_or_hook(self):
-    #self.logger.experiment.log_hyperparams(params)
 
 
 def main():
@@ -306,7 +268,7 @@ def main():
     #config = wandb_logger.experiment.config
 
     checkpoint_cb = ModelCheckpoint(filepath = './cars-{epoch:02d}-{val_acc:.4f}',monitor='val_acc', mode='max')
-    early = EarlyStopping(patience=2, monitor='val_acc', mode='max')
+    early = EarlyStopping(patience=3, monitor='val_acc', mode='max')
     # ------------------------
     # 3 INIT TRAINER
     # ------------------------
