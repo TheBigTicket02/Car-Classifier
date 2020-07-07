@@ -12,6 +12,7 @@ from pytorch_lightning.metrics.functional.classification import accuracy
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping, LearningRateLogger
 from pytorch_lightning.loggers import WandbLogger
 from torch import optim
+from torch.optim.lr_scheduler import MultiStepLR
 #from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torchvision import models, transforms
 from torch.utils.data import DataLoader, random_split
@@ -121,11 +122,12 @@ hyperparameter_defaults = dict(
     backbone='resnet50',
     train_bn = True,
     gpus=1,
-    batch_size = 40,
+    batch_size = 60,
     lr = 3e-3,
-    #lr_scheduler_gamma: float = 1e-1,
+    #lr_scheduler_gamma = 1e-1,
     epochs = 10,
     num_workers = 4
+    #milestones = (5,10)
 )
 
 wandb.init(config=hyperparameter_defaults)
@@ -140,8 +142,9 @@ class Cars(LightningModule):
         self.train_bn = hparams.train_bn
         self.batch_size = hparams.batch_size
         self.lr = hparams.lr
-        #self.lr_scheduler_gamma = lr_scheduler_gamma
+        #self.lr_scheduler_gamma = hparams.lr_scheduler_gamma
         self.num_workers = hparams.num_workers
+        #self.milestones = hparams.milestones
 
         self.__build_model()
         
@@ -167,6 +170,34 @@ class Cars(LightningModule):
         x = self.fc(x)
 
         return x
+    
+    #def train(self, mode=True):
+    #    super().train(mode=mode)
+
+    #    epoch = self.current_epoch
+    #    if epoch < self.milestones[0] and mode:
+    #        # feature extractor is frozen (except for BatchNorm layers)
+    #        freeze(module=self.feature_extractor,
+    #               train_bn=self.train_bn)
+
+    #    elif self.milestones[0] <= epoch < self.milestones[1] and mode:
+            # Unfreeze last two layers of the feature extractor
+    #        freeze(module=self.feature_extractor,
+    #               n=-2,
+    #               train_bn=self.train_bn)
+
+    #def on_epoch_start(self):
+    #    """Use `on_epoch_start` to unfreeze layers progressively."""
+    #    optimizer = self.trainer.optimizers[0]
+    #    if self.current_epoch == self.milestones[0]:
+    #        _unfreeze_and_add_param_group(module=self.feature_extractor[-2:],
+    #                                      optimizer=optimizer,
+    #                                      train_bn=self.train_bn)
+
+    #    elif self.current_epoch == self.milestones[1]:
+    #        _unfreeze_and_add_param_group(module=self.feature_extractor[:-2],
+    #                                      optimizer=optimizer,
+    #                                      train_bn=self.train_bn)
 
     def training_step(self, batch, batch_idx):
 
@@ -279,7 +310,8 @@ class Cars(LightningModule):
                             shuffle=False,
                             pin_memory=True)
 
-def main(hparams):
+
+def main(hparams, default: Optional[dict] = hyperparameter_defaults):
     # ------------------------
     # 1 INIT LIGHTNING MODEL
     # ------------------------
@@ -289,8 +321,12 @@ def main(hparams):
     # ------------------------
     # 2 SET WANDB LOGGER
     # ------------------------
-    wandb_logger = WandbLogger(name='Test7',project='Cars')
-    wandb_logger.log_hyperparams(hparams)
+
+    # Sweep parameters
+    
+    wandb_logger = WandbLogger(name='Test8', project="Cars")
+    
+    wandb_logger.log_hyperparams(default)
 
     checkpoint_cb = ModelCheckpoint(filepath = './cars-{epoch:02d}-{val_acc:.4f}',monitor='val_acc', mode='max')
     # ------------------------
@@ -300,10 +336,11 @@ def main(hparams):
         gpus=hparams.gpus,
         logger=wandb_logger,
         max_epochs=hparams.epochs,
-        progress_bar_refresh_rate=30,
+        progress_bar_refresh_rate=10,
         deterministic=True,
         precision=16,
         checkpoint_callback=checkpoint_cb
+        #callbacks=[LearningRateLogger()],
     )
 
     # ------------------------
