@@ -9,13 +9,14 @@ import pytorch_lightning as pl
 from pytorch_lightning.core.lightning import LightningModule
 from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning.metrics.functional.classification import accuracy
+from torch.optim.lr_scheduler import OneCycleLR
+from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping, LearningRateLogger
 from pytorch_lightning.loggers import WandbLogger
 from torch import optim
 #from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torchvision import models, transforms
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, random_split
 from torchvision.datasets import ImageFolder
-from torch.utils.data import random_split
 
 import wandb
 
@@ -113,35 +114,43 @@ def _unfreeze_and_add_param_group(module: Module,
          'lr': params_lr / 10.,
          })
 
+wandb.login(key='44b74d6614becfad4329893ea0144da65336bdbd')
+
 class Cars(LightningModule):
 
     def __init__(self, 
                 backbone: str = 'resnet50',
                 train_bn: bool = True,
-                batch_size: int = 8,
-                lr: float = 1e-2,
-                lr_scheduler_gamma: float = 1e-1,
-                num_workers: int = 2) -> None
+                batch_size: int = 70,
+                lr: float = 1e-3,
+                num_workers: int = 4,
+                pct_start: Optional[float] = None,
+                anneal_strategy: Optional[str] = None,
+                **kwargs):
         super().__init__()
         self.backbone = backbone
         self.train_bn = train_bn
         self.batch_size = batch_size
         self.lr = lr
-        self.lr_scheduler_gamma = lr_scheduler_gamma
         self.num_workers = num_workers
+        self.pct_start = pct_start
+        self.anneal_strategy = anneal_strategy
+        self.save_hyperparameters()
 
         self.__build_model()
         
     def __build_model(self):
         num_target_classes = 196
         model_func = getattr(models, self.backbone)
-        backbone = model_func(pretrained=True, num_classes = num_target_classes)
+        backbone = model_func(pretrained=True)
     
         _layers = list(backbone.children())[:-1]
         self.feature_extractor = nn.Sequential(*_layers)
         freeze(module=self.feature_extractor, train_bn=self.train_bn)
 
-        _fc_layers = [nn.Linear(2048, num_target_classes)]
+        _fc_layers = [nn.Linear(2048, 1024), #add hyper
+                     nn.Linear(1024, 512), #hyper
+                     nn.Linear(512, num_target_classes)]
         self.fc = nn.Sequential(*_fc_layers)
 
     def forward(self, x):
@@ -152,25 +161,24 @@ class Cars(LightningModule):
         x = self.fc(x)
 
         return x
+    
 
     def training_step(self, batch, batch_idx):
 
         # 1. Forward pass:
         x, y = batch
         y_logits = self.forward(x)
-        y_true = y.view((-1, 1)).type_as(x)
-        y_bin = torch.ge(y_logits, 0)
 
         # 2. Compute loss & accuracy:
-        train_loss = F.cross_entropy(y_logits, y_true)
-        num_correct = torch.eq(y_bin.view(-1), y_true.view(-1)).sum()
+        train_loss = F.cross_entropy(y_logits, y)
+        acc = accuracy(y_logits, y)
 
         # 3. Outputs:
         tqdm_dict = {'train_loss': train_loss}
         output = OrderedDict({'loss': train_loss,
-                              'num_correct': num_correct,
+                               'train_acc': acc,
                               'log': tqdm_dict,
-                              'progress_bar': tqdm_dict})
+                             'progress_bar': tqdm_dict})
 
         return output
 
@@ -179,10 +187,9 @@ class Cars(LightningModule):
 
         train_loss_mean = torch.stack([output['loss']
                                        for output in outputs]).mean()
-        train_acc_mean = torch.stack([output['num_correct']
-                                      for output in outputs]).sum().float()
-        train_acc_mean /= (len(outputs) * self.batch_size)
-        tensorboard_logs = {'train_loss': train_loss_mean, 'train_acc': train_acc_mean}
+        avg_acc = torch.stack([x['train_acc'] for x in outputs]).mean()
+        
+        tensorboard_logs = {'train_loss': train_loss_mean, 'train_acc': avg_acc}
         return {'train_loss': train_loss_mean,  'log': tensorboard_logs}
         #return {'log': {'train_loss': train_loss_mean,
         #                'train_acc': train_acc_mean,
@@ -193,25 +200,22 @@ class Cars(LightningModule):
         # 1. Forward pass:
         x, y = batch
         y_logits = self.forward(x)
-        y_true = y.view((-1, 1)).type_as(x)
-        y_bin = torch.ge(y_logits, 0)
 
         # 2. Compute loss & accuracy:
-        val_loss = F.cross_entropy(y_logits, y_true)
-        num_correct = torch.eq(y_bin.view(-1), y_true.view(-1)).sum()
+        val_loss = F.cross_entropy(y_logits, y)
+        acc = accuracy(y_logits, y)#y_true)
 
-        return {'val_loss': val_loss,
-                'num_correct': num_correct}
+        return {'val_loss': val_loss, 'val_acc': acc
+               }#'num_correct': num_correct}
 
     def validation_epoch_end(self, outputs):
         """Compute and log validation loss and accuracy at the epoch level."""
 
         val_loss_mean = torch.stack([output['val_loss']
                                      for output in outputs]).mean()
-        val_acc_mean = torch.stack([output['num_correct']
-                                    for output in outputs]).sum().float()
-        val_acc_mean /= (len(outputs) * self.batch_size)
-        tensorboard_logs = {'val_loss': val_loss_mean, 'val_acc': val_acc_mean}
+        avg_acc = torch.stack([x['val_acc'] for x in outputs]).mean()
+        
+        tensorboard_logs = {'val_loss': val_loss_mean, 'val_acc': avg_acc}
         return {'val_loss': val_loss_mean,  'log': tensorboard_logs}
         #return {'log': {'val_loss': val_loss_mean,
         #                'val_acc': val_acc_mean,
@@ -219,15 +223,25 @@ class Cars(LightningModule):
         
 
     def configure_optimizers(self):
-        optimizer = optim.Adam(filter(lambda p: p.requires_grad,
+        if (self.pct_start == None) and (self.anneal_strategy == None): #fix or
+        
+            optimizer = optim.Adam(filter(lambda p: p.requires_grad,
                                       self.parameters()),
-                               lr=self.lr)
+                                   lr=self.lr)
+            return optimizer
+        
+        else:
+            
+            optimizer = optim.Adam(filter(lambda p: p.requires_grad,
+                                      self.parameters()),
+                                   lr=self.lr)
+            
+            scheduler = OneCycleLR(optimizer,
+                            max_lr=self.lr,
+                            epochs=10, steps_per_epoch=int(len(self.train_dataset)/self.batch_size),
+                            pct_start=self.pct_start, anneal_strategy=self.anneal_strategy)
 
-        #scheduler = MultiStepLR(optimizer,
-        #                        milestones=self.milestones,
-        #                        gamma=self.lr_scheduler_gamma)
-
-        return optimizer#], [scheduler]
+        return [optimizer], [scheduler]
 
     def setup(self, stage: str):
         data_dir = '../input/stanford-car-dataset-by-classes-folder/car_data/car_data'
@@ -269,59 +283,51 @@ class Cars(LightningModule):
                             num_workers=self.num_workers,
                             shuffle=False,
                             pin_memory=True)
-    @staticmethod
-    def add_model_specific_args(parent_parser):
-        parser = argparse.ArgumentParser(parents=[parent_parser])
-        parser.add_argument('--backbone',
-                            default='resnet50',
-                            type=str,
-                            metavar='BK',
-                            help='Name (as in ``torchvision.models``) of the feature extractor')
-        parser.add_argument('--epochs',
-                            default=5,
-                            type=int,
-                            metavar='N',
-                            help='total number of epochs',
-                            dest='nb_epochs')
-        parser.add_argument('--batch-size',
-                            default=8,
-                            type=int,
-                            metavar='B',
-                            help='batch size',
-                            dest='batch_size')
-        parser.add_argument('--gpus',
-                            type=int,
-                            default=1,
-                            help='number of gpus to use')
-        parser.add_argument('--lr',
-                            '--learning-rate',
-                            default=1e-2,
-                            type=float,
-                            metavar='LR',
-                            help='initial learning rate',
-                            dest='lr')
-        #parser.add_argument('--lr-scheduler-gamma',
-        #                    default=1e-1,
-        #                    type=float,
-        #                    metavar='LRG',
-        #                    help='Factor by which the learning rate is reduced at each milestone',
-        #                    dest='lr_scheduler_gamma')
-        parser.add_argument('--num-workers',
-                            default=2,
-                            type=int,
-                            metavar='W',
-                            help='number of CPU workers',
-                            dest='num_workers')
-        parser.add_argument('--train-bn',
-                            default=True,
-                            type=bool,
-                            metavar='TB',
-                            help='Whether the BatchNorm layers should be trainable',
-                            dest='train_bn')
-        #parser.add_argument('--milestones',
-        #                    default=[5, 10],
-        #                    type=list,
-        #                    metavar='M',
-        #                    help='List of two epochs milestones')
-        return parser
+
+def main():
+    # ------------------------
+    # 1 INIT LIGHTNING MODEL
+    # ------------------------
+    seed_everything(42)
+    model = Cars()
+
+    # ------------------------
+    # 2 SET WANDB LOGGER
+    # ------------------------
+    #wandb.login(key='44b74d6614becfad4329893ea0144da65336bdbd')
+
+    # Sweep parameters
     
+    wandb_logger = WandbLogger(name='Test9', project="Cars")
+    
+    
+    #wandb_logger.experiment.init(config=hyperparameter_defaults, name = 'Test8', project="Cars")
+    #config = wandb_logger.experiment.config
+    #wandb_logger.log_hyperparams(default)
+
+    checkpoint_cb = ModelCheckpoint(filepath = './cars-{epoch:02d}-{val_acc:.4f}',monitor='val_acc', mode='max')
+    early = EarlyStopping(patience=2, monitor='val_acc', mode='max')
+    # ------------------------
+    # 3 INIT TRAINER
+    # ------------------------
+    trainer = Trainer(
+        gpus=1,
+        logger=wandb_logger,
+        max_epochs=15,
+        progress_bar_refresh_rate=10,
+        deterministic=True,
+        precision=16,
+        checkpoint_callback=checkpoint_cb,
+        early_stop_callback=early
+        #callbacks=[LearningRateLogger()],
+    )
+
+    # ------------------------
+    # 5 START TRAINING
+    # ------------------------
+    trainer.fit(model)
+    
+    wandb.save(checkpoint_cb.best_model_path)
+
+if __name__ == '__main__':
+    main()
