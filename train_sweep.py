@@ -9,6 +9,7 @@ import pytorch_lightning as pl
 from pytorch_lightning.core.lightning import LightningModule
 from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning.metrics.functional.classification import accuracy
+from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping, LearningRateLogger
 from pytorch_lightning.loggers import WandbLogger
 from torch import optim
 #from torch.optim.lr_scheduler import ReduceLROnPlateau
@@ -288,8 +289,10 @@ def main(hparams):
     # ------------------------
     # 2 SET WANDB LOGGER
     # ------------------------
-    wandb_logger = WandbLogger(name='Test6',project='Cars')
+    wandb_logger = WandbLogger(name='Test7',project='Cars')
+    wandb_logger.log_hyperparams(hparams)
 
+    checkpoint_cb = ModelCheckpoint(filepath = './cars-{epoch:02d}-{val_acc:.4f}',monitor='val_acc', mode='max')
     # ------------------------
     # 3 INIT TRAINER
     # ------------------------
@@ -298,14 +301,17 @@ def main(hparams):
         logger=wandb_logger,
         max_epochs=hparams.epochs,
         progress_bar_refresh_rate=30,
-        deterministic=True
+        deterministic=True,
+        precision=16,
+        checkpoint_callback=checkpoint_cb
     )
 
     # ------------------------
     # 5 START TRAINING
     # ------------------------
     trainer.fit(model)
-
+    
+    wandb.save(checkpoint_cb.best_model_path)
 
 if __name__ == '__main__':
     main(config)
