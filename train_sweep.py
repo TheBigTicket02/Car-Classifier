@@ -5,7 +5,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-import pytorch_lightning as pl
 from pytorch_lightning.core.lightning import LightningModule
 from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning.metrics.functional.classification import accuracy
@@ -231,10 +230,10 @@ def main():
     wandb.save(checkpoint_cb.best_model_path)
 
     model.unfreeze()
-    model.lr = 5e-6
+    model.lr = 1.5e-5
     model.factor = 0.4
 
-    wandb_logger = WandbLogger(name='Eff4', project="Cars")
+    wandb_logger = WandbLogger(name='Eff', project="Cars")
     
     checkpoint_cb = ModelCheckpoint(filepath = './cars-{epoch:02d}-{val_acc:.4f}',monitor='val_acc', mode='max')
     early = EarlyStopping(patience=4, monitor='val_acc', mode='max')
@@ -252,7 +251,6 @@ def main():
     early_stop_callback=early,
     callbacks=[LearningRateLogger()],
     )
-
     # ------------------------
     # 5 START TRAINING
     # ------------------------
