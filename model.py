@@ -20,7 +20,6 @@ import wandb
 
 from collections import OrderedDict
 from typing import Optional, Generator, Union
-from torch.optim.optimizer import Optimizer
 from torch.nn import Module
 
 BN_TYPES = (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)
@@ -88,6 +87,8 @@ class ResNet50(LightningModule):
                 batch_size: int = 70,
                 lr: float = 1e-3,
                 num_workers: int = 4,
+                hidden_1: int = 1024,
+                hidden_2: int = 512,
                 pct_start: Optional[float] = None,
                 anneal_strategy: Optional[str] = None,
                 **kwargs):
@@ -96,6 +97,8 @@ class ResNet50(LightningModule):
         self.batch_size = batch_size
         self.lr = lr
         self.num_workers = num_workers
+        self.hidden_1 = hidden_1
+        self.hidden_2 = hidden_2
         self.pct_start = pct_start
         self.anneal_strategy = anneal_strategy
         self.save_hyperparameters()
@@ -110,9 +113,9 @@ class ResNet50(LightningModule):
         self.feature_extractor = nn.Sequential(*_layers)
         freeze(module=self.feature_extractor, train_bn=self.train_bn)
 
-        _fc_layers = [nn.Linear(2048, 1024), #add hyper
-                     nn.Linear(1024, 512), #hyper
-                     nn.Linear(512, num_target_classes)]
+        _fc_layers = [nn.Linear(2048, self.hidden_1),
+                     nn.Linear(self.hidden_1, self.hidden_2),
+                     nn.Linear(self.hidden_2, num_target_classes)]
         self.fc = nn.Sequential(*_fc_layers)
 
     def forward(self, x):
@@ -143,6 +146,7 @@ class ResNet50(LightningModule):
 
         return output
 
+
     def training_epoch_end(self, outputs):
         """Compute and log training loss and accuracy at the epoch level."""
 
@@ -152,9 +156,7 @@ class ResNet50(LightningModule):
         
         tensorboard_logs = {'train_loss': train_loss_mean, 'train_acc': avg_acc}
         return {'train_loss': train_loss_mean,  'log': tensorboard_logs}
-        #return {'log': {'train_loss': train_loss_mean,
-        #                'train_acc': train_acc_mean,
-        #                'step': self.current_epoch}}
+
 
     def validation_step(self, batch, batch_idx):
 
@@ -164,10 +166,10 @@ class ResNet50(LightningModule):
 
         # 2. Compute loss & accuracy:
         val_loss = F.cross_entropy(y_logits, y)
-        acc = accuracy(y_logits, y)#y_true)
+        acc = accuracy(y_logits, y)
 
         return {'val_loss': val_loss, 'val_acc': acc
-               }#'num_correct': num_correct}
+               }
 
     def validation_epoch_end(self, outputs):
         """Compute and log validation loss and accuracy at the epoch level."""
@@ -178,13 +180,10 @@ class ResNet50(LightningModule):
         
         tensorboard_logs = {'val_loss': val_loss_mean, 'val_acc': avg_acc}
         return {'val_loss': val_loss_mean,  'log': tensorboard_logs}
-        #return {'log': {'val_loss': val_loss_mean,
-        #                'val_acc': val_acc_mean,
-        #                'step': self.current_epoch}}
         
 
     def configure_optimizers(self):
-        if (self.pct_start == None) and (self.anneal_strategy == None): #fix or
+        if (self.pct_start == None) and (self.anneal_strategy == None):
         
             optimizer = optim.Adam(filter(lambda p: p.requires_grad,
                                       self.parameters()),
@@ -261,7 +260,7 @@ def main():
 
     # Sweep parameters
     
-    wandb_logger = WandbLogger(name='Test9', project="Cars")
+    wandb_logger = WandbLogger(name='Test', project="Cars")
     
     
     #wandb_logger.experiment.init(config=hyperparameter_defaults, name = 'Test8', project="Cars")
@@ -293,14 +292,26 @@ def main():
     
     model.unfreeze()
     model.anneal_strategy = 'cos'
-    model.pct_start = 0.3
+    model.pct_start = 0.1
     model.lr = 1e-4
     
-    wandb_logger = WandbLogger(name='Fine1', project="Cars")
+    wandb_logger = WandbLogger(name='Fine', project="Cars")
     
     # ------------------------
     # 5 START TRAINING
     # ------------------------
+    trainer = Trainer(
+        gpus=1,
+        logger=wandb_logger,
+        max_epochs=15,
+        progress_bar_refresh_rate=10,
+        deterministic=True,
+        precision=16,
+        checkpoint_callback=checkpoint_cb,
+        early_stop_callback=early,
+        callbacks=[LearningRateLogger()],
+    )
+
     trainer.fit(model)
     
     wandb.save(checkpoint_cb.best_model_path)
