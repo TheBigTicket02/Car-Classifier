@@ -191,7 +191,7 @@ hyper = dict(
     #anneal_strategy = 'cos'
 )
 
-def main(default=hyper):
+def main():
     # ------------------------
     # 1 INIT LIGHTNING MODEL
     # ------------------------
@@ -205,8 +205,6 @@ def main(default=hyper):
     # Sweep parameters
     
     wandb_logger = WandbLogger(name='Eff1', project="Cars")
-    
-    wandb_logger.log_hyperparams(default)
 
     checkpoint_cb = ModelCheckpoint(filepath = './cars-{epoch:02d}-{val_acc:.4f}',monitor='val_acc', mode='max')
     early = EarlyStopping(patience=3, monitor='val_acc', mode='max')
@@ -223,6 +221,36 @@ def main(default=hyper):
         checkpoint_callback=checkpoint_cb,
         early_stop_callback=early,
         callbacks=[LearningRateLogger()],
+    )
+
+    # ------------------------
+    # 5 START TRAINING
+    # ------------------------
+    trainer.fit(model)
+    
+    wandb.save(checkpoint_cb.best_model_path)
+
+    model.unfreeze()
+    model.lr = 5e-6
+    model.factor = 0.4
+
+    wandb_logger = WandbLogger(name='Eff4', project="Cars")
+    
+    checkpoint_cb = ModelCheckpoint(filepath = './cars-{epoch:02d}-{val_acc:.4f}',monitor='val_acc', mode='max')
+    early = EarlyStopping(patience=4, monitor='val_acc', mode='max')
+    # ------------------------
+    # 3 INIT TRAINER
+    # ------------------------
+    trainer = Trainer(
+    gpus=1,
+    logger=wandb_logger,
+    max_epochs=25,
+    progress_bar_refresh_rate=5,
+    deterministic=True,
+    precision=16,
+    checkpoint_callback=checkpoint_cb,
+    early_stop_callback=early,
+    callbacks=[LearningRateLogger()],
     )
 
     # ------------------------
