@@ -46,8 +46,8 @@ def main(path):
     image = open_transform_image(path)
     output = predict_logits(image, model)
     _, pred_idx = torch.topk(output, 1)
-    labels = [classes()[pr] for pr in pred_idx[0]]
-    return labels[0]
+    return pred_idx[0]
+ 
 
 st.title('Image Classification')
 
@@ -56,12 +56,13 @@ st.sidebar.header("User Input Image")
 img = st.sidebar.file_uploader(label='Upload your JPG file', type=['jpg'])
 if img:
     image = Image.open(img)
-    st.image(image, caption='Your Image')
+    st.image(image)
 
 
 but = st.sidebar.button(label='Predict')
 if but and img is not None:
-    result = (f'**{main(img)}**')
+    labels = [classes()[pr] for pr in main(img)]
+    result = (f'**{labels[0]}**')
     st.sidebar.markdown(result)
 elif but and img is None:
     st.info('Upload image first')
@@ -69,7 +70,9 @@ elif but and img is None:
 
 st.sidebar.header("Model Interpretation")
 
-st.sidebar.radio(
+captum = st.sidebar.radio(
     label = 'Select interpretation algorithm',
-    options=["Just Prediction", "GradientShap", "IntegratedGradients", "NoiseTunnel", "Occlusion"]
+    options=["Just Prediction", "GradientShap", "IntegratedGradients", "Occlusion"]
 )
+if captum == 'GradientShap' and img is not None:
+    st.write('Good')
