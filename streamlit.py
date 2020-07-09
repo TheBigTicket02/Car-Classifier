@@ -2,40 +2,70 @@ import streamlit as st
 import os
 from PIL import Image
 import captum
-#import effnet
+import joblib
+import st_model
+import torch
+import torch.nn.functional as F
+from torchvision import transforms
 
-#@st.cache
-#def main(image):
-#   model = effnet.EffNet.load_from_checkpoint('././cars-epoch=06-val_acc=0.9350.ckpt')
-#   model.eval()
-#   prediction = model(image)
-#   class
-#   out = st.sidebar.markdown(?)
-#   return out
-#st.info('This is a purely informational message')
+@st.cache
+def classes():
+    cl = joblib.load('classes.pkl')
+    return cl
 
-#if button:
-#   best = main(image)
-# 
+def open_transform_image(path):
+    mean, std = [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
+
+    # transform val
+    img_transforms = transforms.Compose([
+            transforms.Resize((400, 400)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean, std, inplace=True)
+        ])
+    img = Image.open(path)
+    image = img_transforms(img)
+    
+    return image
+
+def predict_logits(img, model):
+    # Convert to a batch of 1
+    xb = img.unsqueeze(0)
+    # Get predictions from model
+    yb = model(xb)
+    # Pick index with highest probability
+    output = F.softmax(yb, dim=1)
+    return output
+
+def predict_image(logits, top=1):
+    logits = main(path)
+
+@st.cache
+def main(path):
+    model = st_model.EffNet.load_from_checkpoint('./cars-epoch=09-val_acc=0.9375.ckpt')
+    model.eval()
+    image = open_transform_image(path)
+    output = predict_logits(image, model)
+    _, pred_idx = torch.topk(output, 1)
+    labels = [classes()[pr] for pr in pred_idx[0]]
+    return labels[0]
+
 st.title('Image Classification')
 
 st.sidebar.header("User Input Image")
 
-img = []
 img = st.sidebar.file_uploader(label='Upload your JPG file', type=['jpg'])
 if img:
     image = Image.open(img)
     st.image(image, caption='Your Image')
-    #image = image[:, :, [2, 1, 0]]
+
 
 but = st.sidebar.button(label='Predict')
-if but:
-    st.sidebar.markdown('**BMW**')
-    
+if but and img is not None:
+    result = (f'**{main(img)}**')
+    st.sidebar.markdown(result)
+elif but and img is None:
+    st.info('Upload image first')
 
-#if button:
-#   best = main()
-#   out = best(image)
 
 st.sidebar.header("Model Interpretation")
 

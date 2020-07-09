@@ -22,6 +22,9 @@ from efficientnet_pytorch import EfficientNet
 
 
 class EffNet(LightningModule):
+    """
+    Untrained Efficient Net(b5)
+    """
 
     def __init__(self, 
                 train_bn: bool = True,
