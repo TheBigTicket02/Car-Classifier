@@ -1,11 +1,8 @@
 import streamlit as st
 from PIL import Image
 import numpy as np
-from matplotlib.colors import LinearSegmentedColormap
 import matplotlib.pyplot as plt
 import torchvision
-from captum.attr import IntegratedGradients
-from captum.attr import GradientShap
 from captum.attr import Occlusion
 from captum.attr import visualization as viz
 import joblib
@@ -97,9 +94,9 @@ if img:
         occlusion = Occlusion(model)
 
         attributions_occ = occlusion.attribute(input_img,
-                                       strides = (3, 50, 50),
+                                       strides = (3, 25, 25),
                                        target=pred_ix,
-                                       sliding_window_shapes=(3,60, 60),
+                                       sliding_window_shapes=(3,35, 35),
                                        baselines=0)
         _ = viz.visualize_image_attr_multiple(np.transpose(attributions_occ.squeeze().numpy(), (1,2,0)),
                                       np.transpose(transformed_img.squeeze().numpy(), (1,2,0)),
