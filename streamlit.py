@@ -219,9 +219,19 @@ def main(path):
         return pred_idx[0]
     pred_label_idx = predict(path, model)
     return model, pred_label_idx
- 
 
-st.title('Image Classification')
+@st.cache
+def interpretation(model, input_img, transformed_img, pred_ix):
+    occlusion = Occlusion(model)
+
+    attributions_occ = occlusion.attribute(input_img,
+                                       strides = (3, 20, 20),
+                                       target=pred_ix,
+                                       sliding_window_shapes=(3,30, 30),
+                                       baselines=0)
+    return attributions_occ
+
+st.title('Car Model Classification')
 
 st.sidebar.header("User Input Image")
 
@@ -248,14 +258,8 @@ if img:
     )
 
     if captum == 'Occlusion':
-        occlusion = Occlusion(model)
-
-        attributions_occ = occlusion.attribute(input_img,
-                                       strides = (3, 25, 25),
-                                       target=pred_ix,
-                                       sliding_window_shapes=(3,35, 35),
-                                       baselines=0)
-        _ = viz.visualize_image_attr_multiple(np.transpose(attributions_occ.squeeze().numpy(), (1,2,0)),
+        attributions = interpretation(model, input_img, transformed_img, pred_ix)
+        _ = viz.visualize_image_attr_multiple(np.transpose(attributions.squeeze().numpy(), (1,2,0)),
                                       np.transpose(transformed_img.squeeze().numpy(), (1,2,0)),
                                       ["original_image", "heat_map"],
                                       ["all", "positive"],
@@ -263,7 +267,6 @@ if img:
                                       outlier_perc=2,
                                      )
         st.pyplot()
-
-
-
-
+    
+    if captum == 'Just prediction':
+        st.write('Great!')
