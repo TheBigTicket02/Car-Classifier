@@ -1,6 +1,4 @@
-# Cars
+## Cars Classifier
 
-Cars Classifier
-
-Resnet50: Current Acc: 84.75
-Efficient Net(B5): Current Acc:
+Resnet50: Final Acc: 89.14
+Efficient Net(B5): Final Acc: 93.75
