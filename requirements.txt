@@ -1,10 +1,7 @@
+torch==1.5.1
+torchvision==0.6.1
 captum==0.2.0
 efficientnet-pytorch==0.6.3
 joblib==0.15.1
-numpy==1.18.5
 pytorch-lightning==0.8.4
 streamlit==0.62.1
-torch==1.7.0.dev20200702
-torchvision==0.8.0.dev20200702
-typing==3.7.4.1
-wandb==0.9.2

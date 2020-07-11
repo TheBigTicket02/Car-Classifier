@@ -1,6 +1,5 @@
 import streamlit as st
 from PIL import Image
-import numpy as np
 import matplotlib.pyplot as plt
 import torchvision
 from captum.attr import Occlusion
@@ -11,7 +10,6 @@ import torch.nn.functional as F
 from torchvision import transforms
 
 import os
-from typing import Optional
 from collections import OrderedDict
 
 import torch.nn as nn
