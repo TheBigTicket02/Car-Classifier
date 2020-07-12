@@ -91,11 +91,9 @@ class EffNet(LightningModule):
 
     def validation_step(self, batch, batch_idx):
 
-        # 1. Forward pass:
         x, y = batch
         y_logits = self.forward(x)
 
-        # 2. Compute loss & accuracy:
         val_loss = F.cross_entropy(y_logits, y)
         acc = accuracy(y_logits, y)
 
@@ -124,12 +122,13 @@ class EffNet(LightningModule):
             optimizer = optim.Adam(self.parameters(),
                 lr=self.lr, weight_decay=self.wd)
             
-            scheduler = OneCycleLR(optimizer,
+            lr_scheduler = {'scheduler': OneCycleLR(optimizer,
                             max_lr=self.lr,
                             epochs=15, steps_per_epoch=1,
-                            pct_start=self.pct_start, anneal_strategy=self.anneal_strategy)
+                            pct_start=self.pct_start, anneal_strategy=self.anneal_strategy),
+                            'name': 'learning_rate'}
 
-        return [optimizer], [scheduler]
+        return [optimizer], [lr_scheduler]
 
     def setup(self, stage: str):
         data_dir = '../input/stanford-car-dataset-by-classes-folder/car_data/car_data'
@@ -143,7 +142,7 @@ class EffNet(LightningModule):
             transforms.ToTensor(),
             transforms.Normalize(mean, std, inplace=True)
         ])
-        train = ImageFolder(data_dir+'/train', train_transforms)
+        train = ImageFolder(os.path.join(data_dir,'train'), train_transforms)
 
         # transform val
         val_transforms = transforms.Compose([
@@ -151,7 +150,7 @@ class EffNet(LightningModule):
             transforms.ToTensor(),
             transforms.Normalize(mean, std, inplace=True)
         ])
-        val = ImageFolder(data_dir+'/test', val_transforms)
+        val = ImageFolder(os.path.join(data_dir,'test'), val_transforms)
         valid, _ = random_split(val, [len(val), 0])
 
         # assign to use in dataloaders
@@ -191,6 +190,12 @@ class EffNet(LightningModule):
                             metavar='N',
                             help='total number of epochs',
                             dest='nb_epochs')
+        parser.add_argument('--patience',
+                            default=3,
+                            type=int,
+                            metavar='ES',
+                            help='early stopping',
+                            dest='patience')
         parser.add_argument('--batch-size',
                             default=16,
                             type=int,
@@ -249,10 +254,10 @@ def main(args: Namespace):
     seed_everything(42)
     model = EffNet(**vars(args))
     
-    wandb_logger = WandbLogger(name='Eff1', project="Cars")
+    wandb_logger = WandbLogger(name='Eff', project="Cars")
 
     checkpoint_cb = ModelCheckpoint(filepath = './cars-{epoch:02d}-{val_acc:.4f}',monitor='val_acc', mode='max')
-    early = EarlyStopping(patience=3, monitor='val_acc', mode='max')
+    early = EarlyStopping(patience=args.patience, monitor='val_acc', mode='max')
 
     trainer = Trainer(
         gpus=args.gpus,
@@ -264,31 +269,6 @@ def main(args: Namespace):
         checkpoint_callback=checkpoint_cb,
         early_stop_callback=early,
         callbacks=[LearningRateLogger()],
-    )
-
-    trainer.fit(model)
-    
-    wandb.save(checkpoint_cb.best_model_path)
-
-    model.unfreeze()
-    model.lr = 1.5e-5
-    model.factor = 0.4
-
-    wandb_logger = WandbLogger(name='Eff', project="Cars")
-    
-    checkpoint_cb = ModelCheckpoint(filepath = './cars-{epoch:02d}-{val_acc:.4f}',monitor='val_acc', mode='max')
-    early = EarlyStopping(patience=4, monitor='val_acc', mode='max')
-
-    trainer = Trainer(
-    gpus=1,
-    logger=wandb_logger,
-    max_epochs=25,
-    progress_bar_refresh_rate=5,
-    deterministic=True,
-    precision=16,
-    checkpoint_callback=checkpoint_cb,
-    early_stop_callback=early,
-    callbacks=[LearningRateLogger()],
     )
 
     trainer.fit(model)
