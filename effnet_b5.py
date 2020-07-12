@@ -12,7 +12,7 @@ from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping, Learning
 from pytorch_lightning.loggers import WandbLogger
 from torch import optim
 from torch.optim.lr_scheduler import ReduceLROnPlateau, OneCycleLR
-from torchvision import models, transforms
+from torchvision import transforms
 from torch.utils.data import DataLoader, random_split
 from torchvision.datasets import ImageFolder
 
@@ -29,7 +29,8 @@ class EffNet(LightningModule):
                 num_target_classes = 196,
                 backbone: str = 'efficientnet-b5',
                 batch_size: int = 16,
-                lr: float = 5e-4,
+                lr: float = 1e-3,
+                wd: float = 0,
                 num_workers: int = 4,
                 factor: float = 0.5,
                 use_onecycle: bool = False,
@@ -41,6 +42,7 @@ class EffNet(LightningModule):
         self.backbone= backbone
         self.batch_size = batch_size
         self.lr = lr
+        self.wd = wd
         self.num_workers = num_workers
         self.factor = factor
         self.use_onecycle = use_onecycle
@@ -111,19 +113,16 @@ class EffNet(LightningModule):
         
 
     def configure_optimizers(self):
-        if self.use_onecycle == False:
         
-            optimizer = optim.Adam(filter(lambda p: p.requires_grad,
-                                      self.parameters()),
-                                   lr=self.lr)
+        if self.use_onecycle == False:
+            optimizer = optim.Adam(self.parameters(),
+                lr=self.lr, weight_decay=self.wd)
             lr_scheduler = {'scheduler': ReduceLROnPlateau(optimizer, factor=self.factor, patience=2),'name': 'learning_rate'}
             return [optimizer], [lr_scheduler]
         
         else:
-            
-            optimizer = optim.Adam(filter(lambda p: p.requires_grad,
-                                      self.parameters()),
-                                   lr=self.lr)
+            optimizer = optim.Adam(self.parameters(),
+                lr=self.lr, weight_decay=self.wd)
             
             scheduler = OneCycleLR(optimizer,
                             max_lr=self.lr,
@@ -176,11 +175,16 @@ class EffNet(LightningModule):
     @staticmethod
     def add_model_specific_args(parent_parser):
         parser = ArgumentParser(parents=[parent_parser])
+        parser.add_argument('--num_target_classes',
+                            default=196,
+                            type=int,
+                            metavar='NUM',
+                            help='Number of target classes')
         parser.add_argument('--backbone',
-                            default='resnet50',
+                            default='efficientnet-b5',
                             type=str,
                             metavar='BK',
-                            help='Name (as in ``torchvision.models``) of the feature extractor')
+                            help='Name of the feature extractor')
         parser.add_argument('--epochs',
                             default=15,
                             type=int,
@@ -188,7 +192,7 @@ class EffNet(LightningModule):
                             help='total number of epochs',
                             dest='nb_epochs')
         parser.add_argument('--batch-size',
-                            default=8,
+                            default=16,
                             type=int,
                             metavar='B',
                             help='batch size',
@@ -199,34 +203,44 @@ class EffNet(LightningModule):
                             help='number of gpus to use')
         parser.add_argument('--lr',
                             '--learning-rate',
-                            default=1e-2,
+                            default=1e-3,
                             type=float,
                             metavar='LR',
                             help='initial learning rate',
                             dest='lr')
-        parser.add_argument('--lr-scheduler-gamma',
-                            default=1e-1,
+        parser.add_argument('--weight_decay',
+                            default=0,
                             type=float,
-                            metavar='LRG',
-                            help='Factor by which the learning rate is reduced at each milestone',
-                            dest='lr_scheduler_gamma')
+                            metavar='WD',
+                            help='L2 Penalty',
+                            dest='weight_decay')
         parser.add_argument('--num-workers',
-                            default=6,
+                            default=4,
                             type=int,
                             metavar='W',
                             help='number of CPU workers',
                             dest='num_workers')
-        parser.add_argument('--train-bn',
-                            default=True,
+        parser.add_argument('--factor',
+                            default=0.5,
+                            type=float,
+                            metavar='FAC',
+                            help='Factor by which learning rate will be reduced',
+                            dest='factor')
+        parser.add_argument('--use_onecycle',
+                            default=False,
                             type=bool,
-                            metavar='TB',
-                            help='Whether the BatchNorm layers should be trainable',
-                            dest='train_bn')
-        parser.add_argument('--milestones',
-                            default=[5, 10],
-                            type=list,
-                            metavar='M',
-                            help='List of two epochs milestones')
+                            metavar='OCLR',
+                            help='Enable One Cycle Learning Rate Scheduler')
+        parser.add_argument('--pct_start',
+                            default=0.3,
+                            type=float,
+                            metavar='PS',
+                            help='The Percentage of the cycle spent increasing LR')
+        parser.add_argument('--anneal_strategy',
+                            default='cos',
+                            type=str,
+                            metavar='AS',
+                            help='Cosine Anneling')
         return parser
 
 
