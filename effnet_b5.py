@@ -11,8 +11,7 @@ from pytorch_lightning.metrics.functional.classification import accuracy
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping, LearningRateLogger
 from pytorch_lightning.loggers import WandbLogger
 from torch import optim
-from torch.optim.lr_scheduler import OneCycleLR
-from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.optim.lr_scheduler import ReduceLROnPlateau, OneCycleLR
 from torchvision import models, transforms
 from torch.utils.data import DataLoader, random_split
 from torchvision.datasets import ImageFolder
@@ -20,7 +19,6 @@ from torchvision.datasets import ImageFolder
 import wandb
 
 from collections import OrderedDict
-from typing import Optional
 from efficientnet_pytorch import EfficientNet
 
 wandb.login(key='44b74d6614becfad4329893ea0144da65336bdbd')
@@ -28,20 +26,24 @@ wandb.login(key='44b74d6614becfad4329893ea0144da65336bdbd')
 class EffNet(LightningModule):
 
     def __init__(self, 
-                train_bn: bool = True,
+                num_target_classes = 196,
+                backbone: str = 'efficientnet-b5',
                 batch_size: int = 16,
                 lr: float = 5e-4,
                 num_workers: int = 4,
                 factor: float = 0.5,
-                pct_start: Optional[float] = None,
-                anneal_strategy: Optional[str] = None,
+                use_onecycle: bool = False,
+                pct_start: float = 0.3,
+                anneal_strategy: str = 'cos',
                 **kwargs):
         super().__init__()
-        self.train_bn = train_bn
+        self.num_target_classes = num_target_classes
+        self.backbone= backbone
         self.batch_size = batch_size
         self.lr = lr
         self.num_workers = num_workers
         self.factor = factor
+        self.use_onecycle = use_onecycle
         self.pct_start = pct_start
         self.anneal_strategy = anneal_strategy
         self.save_hyperparameters()
@@ -49,13 +51,10 @@ class EffNet(LightningModule):
         self.__build_model()
         
     def __build_model(self):
-        num_target_classes = 196
-        self.net = EfficientNet.from_pretrained('efficientnet-b5')
+        self.net = EfficientNet.from_pretrained(self.backbone)
         in_features = self.net._fc.in_features
 
-        _fc_layers = [nn.Linear(in_features, num_target_classes)] #add hyper
-                     #nn.Linear(1024, 512), #hyper
-                     #nn.Linear(512, num_target_classes)]
+        _fc_layers = [nn.Linear(in_features, self.num_target_classes)]
         self.net._fc = nn.Sequential(*_fc_layers)
 
     def forward(self, x):
@@ -64,15 +63,12 @@ class EffNet(LightningModule):
     
     def training_step(self, batch, batch_idx):
 
-        # 1. Forward pass:
         x, y = batch
         y_logits = self.forward(x)
 
-        # 2. Compute loss & accuracy:
         train_loss = F.cross_entropy(y_logits, y)
         acc = accuracy(y_logits, y)
 
-        # 3. Outputs:
         tqdm_dict = {'train_loss': train_loss}
         output = OrderedDict({'loss': train_loss,
                                'train_acc': acc,
@@ -115,7 +111,7 @@ class EffNet(LightningModule):
         
 
     def configure_optimizers(self):
-        if (self.pct_start == None) and (self.anneal_strategy == None): #fix or
+        if self.use_onecycle == False:
         
             optimizer = optim.Adam(filter(lambda p: p.requires_grad,
                                       self.parameters()),
@@ -131,7 +127,6 @@ class EffNet(LightningModule):
             
             scheduler = OneCycleLR(optimizer,
                             max_lr=self.lr,
-                            #steps = self.steps,
                             epochs=15, steps_per_epoch=1,
                             pct_start=self.pct_start, anneal_strategy=self.anneal_strategy)
 
@@ -178,17 +173,62 @@ class EffNet(LightningModule):
                             shuffle=False,
                             pin_memory=True)
 
+    @staticmethod
+    def add_model_specific_args(parent_parser):
+        parser = ArgumentParser(parents=[parent_parser])
+        parser.add_argument('--backbone',
+                            default='resnet50',
+                            type=str,
+                            metavar='BK',
+                            help='Name (as in ``torchvision.models``) of the feature extractor')
+        parser.add_argument('--epochs',
+                            default=15,
+                            type=int,
+                            metavar='N',
+                            help='total number of epochs',
+                            dest='nb_epochs')
+        parser.add_argument('--batch-size',
+                            default=8,
+                            type=int,
+                            metavar='B',
+                            help='batch size',
+                            dest='batch_size')
+        parser.add_argument('--gpus',
+                            type=int,
+                            default=1,
+                            help='number of gpus to use')
+        parser.add_argument('--lr',
+                            '--learning-rate',
+                            default=1e-2,
+                            type=float,
+                            metavar='LR',
+                            help='initial learning rate',
+                            dest='lr')
+        parser.add_argument('--lr-scheduler-gamma',
+                            default=1e-1,
+                            type=float,
+                            metavar='LRG',
+                            help='Factor by which the learning rate is reduced at each milestone',
+                            dest='lr_scheduler_gamma')
+        parser.add_argument('--num-workers',
+                            default=6,
+                            type=int,
+                            metavar='W',
+                            help='number of CPU workers',
+                            dest='num_workers')
+        parser.add_argument('--train-bn',
+                            default=True,
+                            type=bool,
+                            metavar='TB',
+                            help='Whether the BatchNorm layers should be trainable',
+                            dest='train_bn')
+        parser.add_argument('--milestones',
+                            default=[5, 10],
+                            type=list,
+                            metavar='M',
+                            help='List of two epochs milestones')
+        return parser
 
-hyper = dict(
-    train_bn = True,
-    gpus=1,
-    batch_size = 16,
-    lr = 5e-4,
-    factor = 0.5,
-    num_workers = 4
-    #pct_start = 0.3,
-    #anneal_strategy = 'cos'
-)
 
 def main():
     # ------------------------
