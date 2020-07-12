@@ -113,7 +113,7 @@ class EffNet(LightningModule):
         
 
     def configure_optimizers(self):
-        
+
         if self.use_onecycle == False:
             optimizer = optim.Adam(self.parameters(),
                 lr=self.lr, weight_decay=self.wd)
@@ -173,8 +173,8 @@ class EffNet(LightningModule):
                             pin_memory=True)
 
     @staticmethod
-    def add_model_specific_args(parent_parser):
-        parser = ArgumentParser(parents=[parent_parser])
+    def add_model_specific_args():
+        parser = ArgumentParser()
         parser.add_argument('--num_target_classes',
                             default=196,
                             type=int,
@@ -244,30 +244,20 @@ class EffNet(LightningModule):
         return parser
 
 
-def main():
-    # ------------------------
-    # 1 INIT LIGHTNING MODEL
-    # ------------------------
+def main(args: Namespace):
+
     seed_everything(42)
-    model = EffNet()
-
-    # ------------------------
-    # 2 SET WANDB LOGGER
-    # ------------------------
-
-    # Sweep parameters
+    model = EffNet(**vars(args))
     
     wandb_logger = WandbLogger(name='Eff1', project="Cars")
 
     checkpoint_cb = ModelCheckpoint(filepath = './cars-{epoch:02d}-{val_acc:.4f}',monitor='val_acc', mode='max')
     early = EarlyStopping(patience=3, monitor='val_acc', mode='max')
-    # ------------------------
-    # 3 INIT TRAINER
-    # ------------------------
+
     trainer = Trainer(
-        gpus=1,
+        gpus=args.gpus,
         logger=wandb_logger,
-        max_epochs=15,
+        max_epochs=args.epochs,
         progress_bar_refresh_rate=10,
         deterministic=True,
         precision=16,
@@ -276,9 +266,6 @@ def main():
         callbacks=[LearningRateLogger()],
     )
 
-    # ------------------------
-    # 5 START TRAINING
-    # ------------------------
     trainer.fit(model)
     
     wandb.save(checkpoint_cb.best_model_path)
@@ -291,9 +278,7 @@ def main():
     
     checkpoint_cb = ModelCheckpoint(filepath = './cars-{epoch:02d}-{val_acc:.4f}',monitor='val_acc', mode='max')
     early = EarlyStopping(patience=4, monitor='val_acc', mode='max')
-    # ------------------------
-    # 3 INIT TRAINER
-    # ------------------------
+
     trainer = Trainer(
     gpus=1,
     logger=wandb_logger,
@@ -305,12 +290,14 @@ def main():
     early_stop_callback=early,
     callbacks=[LearningRateLogger()],
     )
-    # ------------------------
-    # 5 START TRAINING
-    # ------------------------
+
     trainer.fit(model)
     
     wandb.save(checkpoint_cb.best_model_path)
 
+def get_args():
+    parser = EffNet.add_model_specific_args()
+    return parser.parse_args()
+
 if __name__ == '__main__':
-    main()
+    main(get_args())
