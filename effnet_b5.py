@@ -10,58 +10,196 @@ from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning.metrics.functional.classification import accuracy
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping, LearningRateLogger
 from pytorch_lightning.loggers import WandbLogger
-from torch import optim
-from torch.optim.lr_scheduler import ReduceLROnPlateau, OneCycleLR
+from torch.optim import Adam
+from torch.optim.lr_scheduler import ReduceLROnPlateau, MultiStepLR
 from torchvision import transforms
 from torch.utils.data import DataLoader, random_split
 from torchvision.datasets import ImageFolder
+from efficientnet_pytorch import EfficientNet
 
 import wandb
 
 from collections import OrderedDict
-from efficientnet_pytorch import EfficientNet
+from typing import Optional, Generator, Union
+from torch.nn import Module
+from torch.optim.optimizer import Optimizer
 
-wandb.login(key='44b74d6614becfad4329893ea0144da65336bdbd')
+BN_TYPES = (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)
+
+#  --- Utility functions ---
+
+def _make_trainable(module: Module) -> None:
+    """Unfreezes a given module.
+
+    Args:
+        module: The module to unfreeze
+    """
+    for param in module.parameters():
+        param.requires_grad = True
+    module.train()
+
+
+def _recursive_freeze(module: Module,
+                      train_bn: bool = True) -> None:
+    """Freezes the layers of a given module.
+
+    Args:
+        module: The module to freeze
+        train_bn: If True, leave the BatchNorm layers in training mode
+    """
+    children = list(module.children())
+    if not children:
+        if not (isinstance(module, BN_TYPES) and train_bn):
+            for param in module.parameters():
+                param.requires_grad = False
+            module.eval()
+        else:
+            # Make the BN layers trainable
+            _make_trainable(module)
+    else:
+        for child in children:
+            _recursive_freeze(module=child, train_bn=train_bn)
+
+
+def freeze(module: Module,
+           n: Optional[int] = None,
+           train_bn: bool = True) -> None:
+    """Freezes the layers up to index n (if n is not None).
+
+    Args:
+        module: The module to freeze (at least partially)
+        n: Max depth at which we stop freezing the layers. If None, all
+            the layers of the given module will be frozen.
+        train_bn: If True, leave the BatchNorm layers in training mode
+    """
+    children = list(module.children())
+    n_max = len(children) if n is None else int(n)
+
+    for child in children[:n_max]:
+        _recursive_freeze(module=child, train_bn=train_bn)
+
+    for child in children[n_max:]:
+        _make_trainable(module=child)
+
+
+def filter_params(module: Module,
+                  train_bn: bool = True) -> Generator:
+    """Yields the trainable parameters of a given module.
+
+    Args:
+        module: A given module
+        train_bn: If True, leave the BatchNorm layers in training mode
+
+    Returns:
+        Generator
+    """
+    children = list(module.children())
+    if not children:
+        if not (isinstance(module, BN_TYPES) and train_bn):
+            for param in module.parameters():
+                if param.requires_grad:
+                    yield param
+    else:
+        for child in children:
+            for param in filter_params(module=child, train_bn=train_bn):
+                yield param
+
+
+def _unfreeze_and_add_param_group(module: Module,
+                                  optimizer: Optimizer,
+                                  lr: Optional[float] = None,
+                                  train_bn: bool = True):
+    """Unfreezes a module and adds its parameters to an optimizer."""
+    _make_trainable(module)
+    params_lr = optimizer.param_groups[0]['lr'] if lr is None else float(lr)
+    optimizer.add_param_group(
+        {'params': filter_params(module=module, train_bn=train_bn),
+         'lr': params_lr / 5.,
+         })
+
 
 class EffNet(LightningModule):
 
     def __init__(self, 
                 num_target_classes = 196,
                 backbone: str = 'efficientnet-b5',
-                batch_size: int = 16,
+                hidden_1: int = 1024,
+                hidden_2: int = 512,
+                dropout: float = 0.3, 
+                train_bn: bool = True,
+                milestones: tuple = (5, 10),
+                batch_size: int = 20,
                 lr: float = 1e-3,
+                lr_scheduler_gamma: float = 2e-1,
                 wd: float = 0,
-                num_workers: int = 4,
                 factor: float = 0.5,
-                use_onecycle: bool = False,
-                pct_start: float = 0.3,
-                anneal_strategy: str = 'cos',
+                num_workers: int = 4,
                 **kwargs):
         super().__init__()
         self.num_target_classes = num_target_classes
         self.backbone= backbone
+        self.hidden_1 = hidden_1
+        self.hidden_2 = hidden_2
+        self.dropout = dropout
         self.batch_size = batch_size
+        self.train_bn = train_bn
+        self.milestones = milestones
         self.lr = lr
+        self.lr_scheduler_gamma = lr_scheduler_gamma
         self.wd = wd
         self.num_workers = num_workers
         self.factor = factor
-        self.use_onecycle = use_onecycle
-        self.pct_start = pct_start
-        self.anneal_strategy = anneal_strategy
         self.save_hyperparameters()
 
         self.__build_model()
         
     def __build_model(self):
         self.net = EfficientNet.from_pretrained(self.backbone)
-        in_features = self.net._fc.in_features
+        
+        _layers = list(self.net.children())[:1]
+        self.feature_extractor = nn.Sequential(*_layers)
+        freeze(module=self.feature_extractor, train_bn=self.train_bn)
 
-        _fc_layers = [nn.Linear(in_features, self.num_target_classes)]
+        in_features = self.net._fc.in_features
+        _fc_layers = [nn.Linear(in_features, self.hidden_1),
+                    nn.ReLU(),
+                    nn.Dropout(self.dropout),
+                    nn.Linear(self.hidden_1, self.hidden_2),
+                    nn.ReLU(),
+                    nn.Dropout(self.dropout),
+                    nn.Linear(self.hidden_2, self.num_target_classes)]
         self.net._fc = nn.Sequential(*_fc_layers)
 
     def forward(self, x):
-
         return self.net.forward(x)
+    
+    def train(self, mode=True):
+        super().train(mode=mode)
+
+        epoch = self.current_epoch
+        if epoch < self.milestones[0] and mode:
+            # feature extractor is frozen (except for BatchNorm layers)
+            freeze(module=self.feature_extractor,
+                   train_bn=self.train_bn)
+
+        elif self.milestones[0] <= epoch < self.milestones[1] and mode:
+            # Unfreeze last two layers of the feature extractor
+            freeze(module=self.feature_extractor,
+                   n=-2,
+                   train_bn=self.train_bn)
+
+    def on_epoch_start(self):
+        """Use `on_epoch_start` to unfreeze layers progressively."""
+        optimizer = self.trainer.optimizers[0]
+        if self.current_epoch == self.milestones[0]:
+            _unfreeze_and_add_param_group(module=self.feature_extractor[-2:],
+                                          optimizer=optimizer,
+                                          train_bn=self.train_bn)
+
+        elif self.current_epoch == self.milestones[1]:
+            _unfreeze_and_add_param_group(module=self.feature_extractor[:-2],
+                                          optimizer=optimizer,
+                                          train_bn=self.train_bn)
     
     def training_step(self, batch, batch_idx):
 
@@ -69,11 +207,12 @@ class EffNet(LightningModule):
         y_logits = self.forward(x)
 
         train_loss = F.cross_entropy(y_logits, y)
-        acc = accuracy(y_logits, y)
+        acc1, acc2 = self.__accuracy(y_logits, y, topk=(1,2))
 
         tqdm_dict = {'train_loss': train_loss}
         output = OrderedDict({'loss': train_loss,
-                               'train_acc': acc,
+                               'train_acc1': acc1,
+                               'train_acc2': acc2,
                               'log': tqdm_dict,
                              'progress_bar': tqdm_dict})
 
@@ -84,9 +223,11 @@ class EffNet(LightningModule):
 
         train_loss_mean = torch.stack([output['loss']
                                        for output in outputs]).mean()
-        avg_acc = torch.stack([x['train_acc'] for x in outputs]).mean()
+        avg_acc1 = torch.stack([x['train_acc1'] for x in outputs]).mean()
+        avg_acc2 = torch.stack([x['train_acc2'] for x in outputs]).mean()
         
-        tensorboard_logs = {'train_loss': train_loss_mean, 'train_acc': avg_acc}
+        tensorboard_logs = {'train_loss': train_loss_mean, 'train_acc1': avg_acc1,
+                            'train_acc2': avg_acc2}
         return {'train_loss': train_loss_mean,  'log': tensorboard_logs}
 
     def validation_step(self, batch, batch_idx):
@@ -95,43 +236,64 @@ class EffNet(LightningModule):
         y_logits = self.forward(x)
 
         val_loss = F.cross_entropy(y_logits, y)
-        acc = accuracy(y_logits, y)
+        acc1, acc2 = self.__accuracy(y_logits, y, topk=(1,2))
 
-        return {'val_loss': val_loss, 'val_acc': acc}
+        return OrderedDict({'val_loss': val_loss, 'val_acc1': acc1,
+                            'val_acc2': acc2})
 
     def validation_epoch_end(self, outputs):
         """Compute and log validation loss and accuracy at the epoch level."""
 
         val_loss_mean = torch.stack([output['val_loss']
                                      for output in outputs]).mean()
-        avg_acc = torch.stack([x['val_acc'] for x in outputs]).mean()
+        avg_acc1 = torch.stack([x['val_acc1'] for x in outputs]).mean()
+        avg_acc2 = torch.stack([x['val_acc2'] for x in outputs]).mean()
         
-        tensorboard_logs = {'val_loss': val_loss_mean, 'val_acc': avg_acc}
+        tensorboard_logs = {'val_loss': val_loss_mean, 'val_acc1': avg_acc1,
+                            'val_acc2': avg_acc2}
         return {'val_loss': val_loss_mean,  'log': tensorboard_logs}
-        
+
+
+    @classmethod
+    def __accuracy(cls, output, target, topk=(1,)):
+        """Computes the accuracy over the k top predictions for the specified values of k"""
+        with torch.no_grad():
+            maxk = max(topk)
+            batch_size = target.size(0)
+
+            _, pred = output.topk(maxk, 1, True, True)
+            pred = pred.t()
+            correct = pred.eq(target.view(1, -1).expand_as(pred))
+
+            res = []
+            for k in topk:
+                correct_k = correct[:k].view(-1).float().sum(0, keepdim=True)
+                res.append(correct_k.mul_(100.0 / batch_size))
+            return res    
 
     def configure_optimizers(self):
-
-        if self.use_onecycle == False:
-            optimizer = optim.Adam(self.parameters(),
-                lr=self.lr, weight_decay=self.wd)
-            lr_scheduler = {'scheduler': ReduceLROnPlateau(optimizer, factor=self.factor, patience=2)
-            ,'name': 'learning_rate',
-            'monitor': 'val_acc'}
-            return [optimizer], [lr_scheduler]
         
-        else:
-            optimizer = optim.Adam(self.parameters(),
-                lr=self.lr, weight_decay=self.wd)
-            
-            lr_scheduler = {'scheduler': OneCycleLR(optimizer,
-                            max_lr=self.lr,
-                            epochs=15, steps_per_epoch=1,
-                            pct_start=self.pct_start, anneal_strategy=self.anneal_strategy),
-                            'name': 'learning_rate',
-                            'monitor': 'val_acc'}
+        if self.current_epoch <= self.milestones[1]:
 
-        return [optimizer], [lr_scheduler]
+            optimizer = Adam(filter(lambda p: p.requires_grad,
+                                      self.parameters()),
+                               lr=self.lr)
+
+            lr_scheduler = {'scheduler': MultiStepLR(optimizer,
+                                milestones=self.milestones,
+                                gamma=self.lr_scheduler_gamma),
+                            'name': 'learning_rate' }
+
+            return [optimizer], [lr_scheduler]
+
+        else:
+            optimizer = Adam(self.parameters(),
+                lr=self.lr, weight_decay=self.wd)
+            lr_scheduler = {'scheduler': ReduceLROnPlateau(optimizer, factor=self.factor, 
+            patience=3, mode='max'),'name': 'learning_rate',
+            'monitor': 'val_acc1'}
+            return [optimizer], [lr_scheduler]
+    
 
     def setup(self, stage: str):
         data_dir = '../input/stanford-car-dataset-by-classes-folder/car_data/car_data'
@@ -141,7 +303,7 @@ class EffNet(LightningModule):
             transforms.Resize((400, 400)),
             transforms.RandomCrop(400, padding=20, padding_mode='reflect'),
             transforms.RandomHorizontalFlip(),
-            transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.2),
+            transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.1),
             transforms.ToTensor(),
             transforms.Normalize(mean, std, inplace=True)
         ])
@@ -173,7 +335,7 @@ class EffNet(LightningModule):
                             num_workers=self.num_workers,
                             shuffle=False,
                             pin_memory=True)
-
+'''
     @staticmethod
     def add_model_specific_args():
         parser = ArgumentParser()
@@ -250,22 +412,24 @@ class EffNet(LightningModule):
                             metavar='AS',
                             help='Cosine Anneling')
         return parser
+'''
 
+wandb.login(key='44b74d6614becfad4329893ea0144da65336bdbd')
 
-def main(args: Namespace):
+def main():
 
     seed_everything(42)
-    model = EffNet(**vars(args))
+    model = EffNet()
     
-    wandb_logger = WandbLogger(name='Eff', project="Cars")
+    wandb_logger = WandbLogger(name='Best1', project="Cars")
 
-    checkpoint_cb = ModelCheckpoint(filepath = './cars-{epoch:02d}-{val_acc:.4f}',monitor='val_acc', mode='max')
-    early = EarlyStopping(patience=args.patience, monitor='val_acc', mode='max')
+    checkpoint_cb = ModelCheckpoint(filepath = './cars-{epoch:02d}-{val_acc:.4f}',monitor='val_acc1', mode='max')
+    early = EarlyStopping(patience=5, monitor='val_acc1', mode='max')
 
     trainer = Trainer(
-        gpus=args.gpus,
+        gpus=1,
         logger=wandb_logger,
-        max_epochs=args.epochs,
+        max_epochs=24,
         progress_bar_refresh_rate=10,
         deterministic=True,
         precision=16,
@@ -278,9 +442,9 @@ def main(args: Namespace):
     
     wandb.save(checkpoint_cb.best_model_path)
 
-def get_args() -> Namespace:
-    parser = EffNet.add_model_specific_args()
-    return parser.parse_args()
+#def get_args() -> Namespace:
+#    parser = EffNet.add_model_specific_args()
+#    return parser.parse_args()
 
 if __name__ == '__main__':
-    main(get_args())
+    main()
