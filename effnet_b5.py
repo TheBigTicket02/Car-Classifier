@@ -115,7 +115,9 @@ class EffNet(LightningModule):
         if self.use_onecycle == False:
             optimizer = optim.Adam(self.parameters(),
                 lr=self.lr, weight_decay=self.wd)
-            lr_scheduler = {'scheduler': ReduceLROnPlateau(optimizer, factor=self.factor, patience=2),'name': 'learning_rate'}
+            lr_scheduler = {'scheduler': ReduceLROnPlateau(optimizer, factor=self.factor, patience=2)
+            ,'name': 'learning_rate',
+            'monitor': 'val_acc'}
             return [optimizer], [lr_scheduler]
         
         else:
@@ -126,7 +128,8 @@ class EffNet(LightningModule):
                             max_lr=self.lr,
                             epochs=15, steps_per_epoch=1,
                             pct_start=self.pct_start, anneal_strategy=self.anneal_strategy),
-                            'name': 'learning_rate'}
+                            'name': 'learning_rate',
+                            'monitor': 'val_acc'}
 
         return [optimizer], [lr_scheduler]
 
@@ -275,7 +278,7 @@ def main(args: Namespace):
     
     wandb.save(checkpoint_cb.best_model_path)
 
-def get_args():
+def get_args() -> Namespace:
     parser = EffNet.add_model_specific_args()
     return parser.parse_args()
 
