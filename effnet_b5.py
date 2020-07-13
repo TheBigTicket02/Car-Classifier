@@ -80,20 +80,18 @@ def freeze(module: Module,
     for child in children[n_max:]:
         _make_trainable(module=child)
 
-
 class EffNet(LightningModule):
 
     def __init__(self, 
                 num_target_classes = 196,
                 backbone: str = 'efficientnet-b5',
-                hidden_1: int = 1024,
-                hidden_2: int = 512,
+                hidden: int = 1024,
                 dropout: float = 0.3, 
                 train_bn: bool = True,
-                milestones: tuple = (5, 10),
+                milestones: tuple = (4, 9),
                 batch_size: int = 20,
                 lr: float = 1e-3,
-                lr_scheduler_gamma: float = 2e-1,
+                lr_scheduler_gamma: float = 3e-1,
                 wd: float = 1e-6,
                 factor: float = 0.5,
                 num_workers: int = 4,
@@ -101,8 +99,7 @@ class EffNet(LightningModule):
         super().__init__()
         self.num_target_classes = num_target_classes
         self.backbone= backbone
-        self.hidden_1 = hidden_1
-        self.hidden_2 = hidden_2
+        self.hidden = hidden
         self.dropout = dropout
         self.batch_size = batch_size
         self.train_bn = train_bn
@@ -124,13 +121,10 @@ class EffNet(LightningModule):
         freeze(module=self.feature_extractor, train_bn=self.train_bn)
 
         in_features = self.net._fc.in_features
-        _fc_layers = [nn.Linear(in_features, self.hidden_1),
+        _fc_layers = [nn.Linear(in_features, self.hidden),
                     nn.ReLU(),
                     nn.Dropout(self.dropout),
-                    nn.Linear(self.hidden_1, self.hidden_2),
-                    nn.ReLU(),
-                    nn.Dropout(self.dropout),
-                    nn.Linear(self.hidden_2, self.num_target_classes)]
+                    nn.Linear(self.hidden, self.num_target_classes)]
         self.net._fc = nn.Sequential(*_fc_layers)
 
     def forward(self, x):
@@ -145,10 +139,16 @@ class EffNet(LightningModule):
             freeze(module=self.feature_extractor,
                    train_bn=self.train_bn)
 
-        elif self.milestones[0] <= epoch < self.milestones[1] and mode:
+        elif self.milestones[0] <= epoch < self.milestones[1]-3 and mode:
             # Unfreeze last two layers of the feature extractor
             freeze(module=self.feature_extractor,
                    n=-2,
+                   train_bn=self.train_bn)
+
+        elif self.milestones[1]-3 <= epoch < self.milestones[1] and mode:
+            # Unfreeze next six layers
+            freeze(module=self.feature_extractor,
+                   n=-8,
                    train_bn=self.train_bn)
 
     def training_step(self, batch, batch_idx):
@@ -174,7 +174,7 @@ class EffNet(LightningModule):
                                        for output in outputs]).mean()
         avg_acc = torch.stack([x['train_acc'] for x in outputs]).mean()
         
-        tensorboard_logs = {'train_loss': train_loss_mean, 'train_acc1': avg_acc}
+        tensorboard_logs = {'train_loss': train_loss_mean, 'train_acc': avg_acc}
 
         return {'train_loss': train_loss_mean,  'log': tensorboard_logs}
 
@@ -216,7 +216,7 @@ class EffNet(LightningModule):
             res = []
             for k in topk:
                 correct_k = correct[:k].view(-1).float().sum(0, keepdim=True)
-                res.append(correct_k.mul_(100.0 / batch_size))
+                res.append(correct_k.mul_(1.0 / batch_size))
             return res    
 
     def configure_optimizers(self):
@@ -238,8 +238,8 @@ class EffNet(LightningModule):
             optimizer = Adam(self.parameters(),
                 lr=self.lr, weight_decay=self.wd)
             lr_scheduler = {'scheduler': ReduceLROnPlateau(optimizer, factor=self.factor, 
-            patience=3, mode='max'),'name': 'learning_rate',
-            'monitor': 'val_acc1'}
+            patience=2, mode='max'),'name': 'learning_rate',
+            'monitor': 'val_acc'}
             return [optimizer], [lr_scheduler]
     
 
@@ -369,15 +369,17 @@ def main():
     seed_everything(42)
     model = EffNet()
     
-    wandb_logger = WandbLogger(name='Best1', project="Cars")
+    wandb_logger = WandbLogger(name='Best', project="Cars")
+    # optional: log model topology
+    #wandb_logger.watch(model.net)
 
-    checkpoint_cb = ModelCheckpoint(filepath = './cars-{epoch:02d}-{val_acc:.4f}',monitor='val_acc1', mode='max')
-    early = EarlyStopping(patience=5, monitor='val_acc1', mode='max')
+    checkpoint_cb = ModelCheckpoint(filepath = './cars-{epoch:02d}-{val_acc:.4f}',monitor='val_acc', mode='max')
+    early = EarlyStopping(patience=5, monitor='val_acc', mode='max')
 
     trainer = Trainer(
         gpus=1,
         logger=wandb_logger,
-        max_epochs=24,
+        max_epochs=25,
         progress_bar_refresh_rate=10,
         deterministic=True,
         precision=16,
