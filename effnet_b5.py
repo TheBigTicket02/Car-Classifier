@@ -20,9 +20,8 @@ from efficientnet_pytorch import EfficientNet
 import wandb
 
 from collections import OrderedDict
-from typing import Optional, Generator, Union
+from typing import Optional
 from torch.nn import Module
-from torch.optim.optimizer import Optimizer
 
 BN_TYPES = (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)
 
@@ -82,42 +81,6 @@ def freeze(module: Module,
         _make_trainable(module=child)
 
 
-def filter_params(module: Module,
-                  train_bn: bool = True) -> Generator:
-    """Yields the trainable parameters of a given module.
-
-    Args:
-        module: A given module
-        train_bn: If True, leave the BatchNorm layers in training mode
-
-    Returns:
-        Generator
-    """
-    children = list(module.children())
-    if not children:
-        if not (isinstance(module, BN_TYPES) and train_bn):
-            for param in module.parameters():
-                if param.requires_grad:
-                    yield param
-    else:
-        for child in children:
-            for param in filter_params(module=child, train_bn=train_bn):
-                yield param
-
-
-def _unfreeze_and_add_param_group(module: Module,
-                                  optimizer: Optimizer,
-                                  lr: Optional[float] = None,
-                                  train_bn: bool = True):
-    """Unfreezes a module and adds its parameters to an optimizer."""
-    _make_trainable(module)
-    params_lr = optimizer.param_groups[0]['lr'] if lr is None else float(lr)
-    optimizer.add_param_group(
-        {'params': filter_params(module=module, train_bn=train_bn),
-         'lr': params_lr / 5.,
-         })
-
-
 class EffNet(LightningModule):
 
     def __init__(self, 
@@ -131,7 +94,7 @@ class EffNet(LightningModule):
                 batch_size: int = 20,
                 lr: float = 1e-3,
                 lr_scheduler_gamma: float = 2e-1,
-                wd: float = 0,
+                wd: float = 1e-6,
                 factor: float = 0.5,
                 num_workers: int = 4,
                 **kwargs):
@@ -188,31 +151,17 @@ class EffNet(LightningModule):
                    n=-2,
                    train_bn=self.train_bn)
 
-    def on_epoch_start(self):
-        """Use `on_epoch_start` to unfreeze layers progressively."""
-        optimizer = self.trainer.optimizers[0]
-        if self.current_epoch == self.milestones[0]:
-            _unfreeze_and_add_param_group(module=self.feature_extractor[-2:],
-                                          optimizer=optimizer,
-                                          train_bn=self.train_bn)
-
-        elif self.current_epoch == self.milestones[1]:
-            _unfreeze_and_add_param_group(module=self.feature_extractor[:-2],
-                                          optimizer=optimizer,
-                                          train_bn=self.train_bn)
-    
     def training_step(self, batch, batch_idx):
 
         x, y = batch
         y_logits = self.forward(x)
 
         train_loss = F.cross_entropy(y_logits, y)
-        acc1, acc2 = self.__accuracy(y_logits, y, topk=(1,2))
+        acc = accuracy(y_logits, y)
 
         tqdm_dict = {'train_loss': train_loss}
         output = OrderedDict({'loss': train_loss,
-                               'train_acc1': acc1,
-                               'train_acc2': acc2,
+                               'train_acc': acc,
                               'log': tqdm_dict,
                              'progress_bar': tqdm_dict})
 
@@ -223,11 +172,10 @@ class EffNet(LightningModule):
 
         train_loss_mean = torch.stack([output['loss']
                                        for output in outputs]).mean()
-        avg_acc1 = torch.stack([x['train_acc1'] for x in outputs]).mean()
-        avg_acc2 = torch.stack([x['train_acc2'] for x in outputs]).mean()
+        avg_acc = torch.stack([x['train_acc'] for x in outputs]).mean()
         
-        tensorboard_logs = {'train_loss': train_loss_mean, 'train_acc1': avg_acc1,
-                            'train_acc2': avg_acc2}
+        tensorboard_logs = {'train_loss': train_loss_mean, 'train_acc1': avg_acc}
+
         return {'train_loss': train_loss_mean,  'log': tensorboard_logs}
 
     def validation_step(self, batch, batch_idx):
@@ -236,21 +184,21 @@ class EffNet(LightningModule):
         y_logits = self.forward(x)
 
         val_loss = F.cross_entropy(y_logits, y)
-        acc1, acc2 = self.__accuracy(y_logits, y, topk=(1,2))
+        acc, acc2 = self.__accuracy(y_logits, y, topk=(1,2))
 
-        return OrderedDict({'val_loss': val_loss, 'val_acc1': acc1,
-                            'val_acc2': acc2})
+        return OrderedDict({'val_loss': val_loss, 'val_acc': acc,
+                            'top2_acc': acc2})
 
     def validation_epoch_end(self, outputs):
         """Compute and log validation loss and accuracy at the epoch level."""
 
         val_loss_mean = torch.stack([output['val_loss']
                                      for output in outputs]).mean()
-        avg_acc1 = torch.stack([x['val_acc1'] for x in outputs]).mean()
-        avg_acc2 = torch.stack([x['val_acc2'] for x in outputs]).mean()
+        avg_acc = torch.stack([x['val_acc'] for x in outputs]).mean()
+        avg_acc2 = torch.stack([x['top2_acc'] for x in outputs]).mean()
         
-        tensorboard_logs = {'val_loss': val_loss_mean, 'val_acc1': avg_acc1,
-                            'val_acc2': avg_acc2}
+        tensorboard_logs = {'val_loss': val_loss_mean, 'val_acc': avg_acc,
+                            'top2_acc': avg_acc2}
         return {'val_loss': val_loss_mean,  'log': tensorboard_logs}
 
 
