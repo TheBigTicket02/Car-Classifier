@@ -102,7 +102,23 @@ class EffNet(LightningModule):
         
         tensorboard_logs = {'val_loss': val_loss_mean, 'val_acc': avg_acc}
         return {'val_loss': val_loss_mean,  'log': tensorboard_logs}
-        
+
+    @classmethod
+    def __accuracy(cls, output, target, topk=(1,)):
+        """Computes the accuracy over the k top predictions for the specified values of k"""
+        with torch.no_grad():
+            maxk = max(topk)
+            batch_size = target.size(0)
+
+            _, pred = output.topk(maxk, 1, True, True)
+            pred = pred.t()
+            correct = pred.eq(target.view(1, -1).expand_as(pred))
+
+            res = []
+            for k in topk:
+                correct_k = correct[:k].view(-1).float().sum(0, keepdim=True)
+                res.append(correct_k.mul_(1.0 / batch_size))
+            return res
 
     def configure_optimizers(self):
 
@@ -112,7 +128,6 @@ class EffNet(LightningModule):
             ,'name': 'learning_rate',
             'monitor': 'val_acc'}
         return [optimizer], [lr_scheduler]
-        
 
     def setup(self, stage: str):
         data_dir = '../input/stanford-car-dataset-by-classes-folder/car_data/car_data'
@@ -215,21 +230,7 @@ class EffNet(LightningModule):
                             metavar='FAC',
                             help='Factor by which learning rate will be reduced',
                             dest='factor')
-        parser.add_argument('--use_onecycle',
-                            default=False,
-                            type=bool,
-                            metavar='OCLR',
-                            help='Enable One Cycle Learning Rate Scheduler')
-        parser.add_argument('--pct_start',
-                            default=0.3,
-                            type=float,
-                            metavar='PS',
-                            help='The Percentage of the cycle spent increasing LR')
-        parser.add_argument('--anneal_strategy',
-                            default='cos',
-                            type=str,
-                            metavar='AS',
-                            help='Cosine Anneling')
+
         return parser
 
 
@@ -246,7 +247,7 @@ def main(args: Namespace):
     trainer = Trainer(
         gpus=args.gpus,
         logger=wandb_logger,
-        max_epochs=args.epochs,
+        max_epochs=args.nb_epochs,
         progress_bar_refresh_rate=10,
         deterministic=True,
         precision=16,
