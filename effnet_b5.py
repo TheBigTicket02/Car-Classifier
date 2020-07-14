@@ -29,7 +29,7 @@ class EffNet(LightningModule):
                 num_target_classes = 196,
                 backbone: str = 'efficientnet-b5',
                 batch_size: int = 20,
-                lr: float = 1e-3,
+                lr: float = 4e-4,
                 wd: float = 0,
                 num_workers: int = 4,
                 factor: float = 0.5,
@@ -89,9 +89,10 @@ class EffNet(LightningModule):
         y_logits = self.forward(x)
 
         val_loss = F.cross_entropy(y_logits, y)
-        acc = accuracy(y_logits, y)
+        acc, acc2 = self.__accuracy(y_logits, y, topk=(1,2))
 
-        return {'val_loss': val_loss, 'val_acc': acc}
+        return OrderedDict({'val_loss': val_loss, 'val_acc': acc,
+                            'top2_acc': acc2})
 
     def validation_epoch_end(self, outputs):
         """Compute and log validation loss and accuracy at the epoch level."""
@@ -99,8 +100,10 @@ class EffNet(LightningModule):
         val_loss_mean = torch.stack([output['val_loss']
                                      for output in outputs]).mean()
         avg_acc = torch.stack([x['val_acc'] for x in outputs]).mean()
+        avg_acc2 = torch.stack([x['top2_acc'] for x in outputs]).mean()
         
-        tensorboard_logs = {'val_loss': val_loss_mean, 'val_acc': avg_acc}
+        tensorboard_logs = {'val_loss': val_loss_mean, 'val_acc': avg_acc,
+                            'top2_acc': avg_acc2}
         return {'val_loss': val_loss_mean,  'log': tensorboard_logs}
 
     @classmethod
@@ -124,7 +127,8 @@ class EffNet(LightningModule):
 
         optimizer = Adam(self.parameters(),
             lr=self.lr, weight_decay=self.wd)
-        lr_scheduler = {'scheduler': ReduceLROnPlateau(optimizer, factor=self.factor, patience=2)
+        lr_scheduler = {'scheduler': ReduceLROnPlateau(optimizer, factor=self.factor, 
+            patience=2, mode='max')
             ,'name': 'learning_rate',
             'monitor': 'val_acc'}
         return [optimizer], [lr_scheduler]
