@@ -89,8 +89,9 @@ class ResNet50(LightningModule):
                 num_workers: int = 4,
                 hidden_1: int = 1024,
                 hidden_2: int = 512,
-                pct_start: Optional[float] = None,
-                anneal_strategy: Optional[str] = None,
+                epoch_freeze: int = 8,
+                pct_start: float = 0.2,
+                anneal_strategy: str = 'cos',
                 **kwargs):
         super().__init__()
         self.train_bn = train_bn
@@ -99,6 +100,7 @@ class ResNet50(LightningModule):
         self.num_workers = num_workers
         self.hidden_1 = hidden_1
         self.hidden_2 = hidden_2
+        self.epoch_freeze = epoch_freeze
         self.pct_start = pct_start
         self.anneal_strategy = anneal_strategy
         self.save_hyperparameters()
@@ -183,7 +185,7 @@ class ResNet50(LightningModule):
         
 
     def configure_optimizers(self):
-        if (self.pct_start == None) and (self.anneal_strategy == None):
+        if self.current_epoch < self.epoch_freeze:
         
             optimizer = optim.Adam(filter(lambda p: p.requires_grad,
                                       self.parameters()),
@@ -198,7 +200,7 @@ class ResNet50(LightningModule):
             
             scheduler = OneCycleLR(optimizer,
                             max_lr=self.lr,
-                            epochs=15, steps_per_epoch=1,
+                            total_steps=15,
                             pct_start=self.pct_start, anneal_strategy=self.anneal_strategy)
 
         return [optimizer], [scheduler]
@@ -209,7 +211,7 @@ class ResNet50(LightningModule):
         mean, std = [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
         train_transforms = transforms.Compose([
             transforms.Resize((400, 400)),
-            transforms.RandomCrop(400, padding=20, padding_mode='reflect'),
+            transforms.RandomCrop(350),
             transforms.RandomHorizontalFlip(),
             transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.2),
             transforms.ToTensor(),
@@ -256,50 +258,14 @@ def main():
     # ------------------------
     # 2 SET WANDB LOGGER
     # ------------------------
-    #wandb.login(key='44b74d6614becfad4329893ea0144da65336bdbd')
-
-    # Sweep parameters
+    wandb.login(key='44b74d6614becfad4329893ea0144da65336bdbd')
     
     wandb_logger = WandbLogger(name='Test', project="Cars")
-    
-    
-    #wandb_logger.experiment.init(config=hyperparameter_defaults, name = 'Test8', project="Cars")
-    #config = wandb_logger.experiment.config
+
 
     checkpoint_cb = ModelCheckpoint(filepath = './cars-{epoch:02d}-{val_acc:.4f}',monitor='val_acc', mode='max')
     early = EarlyStopping(patience=3, monitor='val_acc', mode='max')
-    # ------------------------
-    # 3 INIT TRAINER
-    # ------------------------
-    trainer = Trainer(
-        gpus=1,
-        logger=wandb_logger,
-        max_epochs=15,
-        progress_bar_refresh_rate=10,
-        deterministic=True,
-        precision=16,
-        checkpoint_callback=checkpoint_cb,
-        early_stop_callback=early
-        #callbacks=[LearningRateLogger()],
-    )
 
-    # ------------------------
-    # 5 START TRAINING
-    # ------------------------
-    trainer.fit(model)
-    
-    wandb.save(checkpoint_cb.best_model_path)
-    
-    model.unfreeze()
-    model.anneal_strategy = 'cos'
-    model.pct_start = 0.1
-    model.lr = 1e-4
-    
-    wandb_logger = WandbLogger(name='Fine', project="Cars")
-    
-    # ------------------------
-    # 5 START TRAINING
-    # ------------------------
     trainer = Trainer(
         gpus=1,
         logger=wandb_logger,
