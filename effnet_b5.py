@@ -175,8 +175,8 @@ class EffNet(LightningModule):
                             pin_memory=True)
 
     @staticmethod
-    def add_model_specific_args():
-        parser = ArgumentParser()
+    def add_model_specific_args(parent_parser):
+        parser = ArgumentParser(parents=[parent_parser])
         parser.add_argument('--num_target_classes',
                             default=196,
                             type=int,
@@ -238,7 +238,7 @@ def main(args: Namespace):
         max_epochs=args.nb_epochs,
         progress_bar_refresh_rate=10,
         deterministic=True,
-        precision=16,
+        precision=16 if args.use_16bit else 32,
         checkpoint_callback=checkpoint_cb,
         early_stop_callback=early,
         callbacks=[LearningRateLogger()],
@@ -249,23 +249,25 @@ def main(args: Namespace):
     wandb.save(checkpoint_cb.best_model_path)
 
 def get_args() -> Namespace:
-        parser.add_argument('--epochs',
+    parent_parser = ArgumentParser(add_help=False)
+    parent_parser.add_argument('--gpus', type=int, default=1,
+                               help='how many gpus')
+    parent_parser.add_argument('--use-16bit', dest='use_16bit', action='store_true',
+                               help='if true uses 16 bit precision')
+    parent_parser.add_argument('--epochs',
                             default=15,
                             type=int,
                             metavar='N',
                             help='total number of epochs',
                             dest='nb_epochs')
-        parser.add_argument('--patience',
+    parent_parser.add_argument('--patience',
                             default=3,
                             type=int,
                             metavar='ES',
                             help='early stopping',
                             dest='patience')
-         parser.add_argument('--gpus',
-                            type=int,
-                            default=1,
-                            help='number of gpus to use')
-    parser = EffNet.add_model_specific_args()
+ 
+    parser = EffNet.add_model_specific_args(parent_parser)
     return parser.parse_args()
 
 if __name__ == '__main__':
