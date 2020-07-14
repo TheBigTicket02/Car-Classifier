@@ -187,28 +187,12 @@ class EffNet(LightningModule):
                             type=str,
                             metavar='BK',
                             help='Name of the feature extractor')
-        parser.add_argument('--epochs',
-                            default=15,
-                            type=int,
-                            metavar='N',
-                            help='total number of epochs',
-                            dest='nb_epochs')
-        parser.add_argument('--patience',
-                            default=3,
-                            type=int,
-                            metavar='ES',
-                            help='early stopping',
-                            dest='patience')
         parser.add_argument('--batch-size',
                             default=16,
                             type=int,
                             metavar='B',
                             help='batch size',
                             dest='batch_size')
-        parser.add_argument('--gpus',
-                            type=int,
-                            default=1,
-                            help='number of gpus to use')
         parser.add_argument('--lr',
                             '--learning-rate',
                             default=1e-3,
@@ -265,6 +249,22 @@ def main(args: Namespace):
     wandb.save(checkpoint_cb.best_model_path)
 
 def get_args() -> Namespace:
+        parser.add_argument('--epochs',
+                            default=15,
+                            type=int,
+                            metavar='N',
+                            help='total number of epochs',
+                            dest='nb_epochs')
+        parser.add_argument('--patience',
+                            default=3,
+                            type=int,
+                            metavar='ES',
+                            help='early stopping',
+                            dest='patience')
+         parser.add_argument('--gpus',
+                            type=int,
+                            default=1,
+                            help='number of gpus to use')
     parser = EffNet.add_model_specific_args()
     return parser.parse_args()
 

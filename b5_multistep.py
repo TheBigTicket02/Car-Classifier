@@ -118,7 +118,7 @@ class EffNet(LightningModule):
         
         _layers = list(self.net.children())[:1]
         self.feature_extractor = nn.Sequential(*_layers)
-        freeze(module=self.feature_extractor, train_bn=self.train_bn)
+        #freeze(module=self.feature_extractor, train_bn=self.train_bn)
 
         in_features = self.net._fc.in_features
         _fc_layers = [nn.Linear(in_features, self.hidden),
