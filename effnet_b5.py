@@ -10,8 +10,8 @@ from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning.metrics.functional.classification import accuracy
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping, LearningRateLogger
 from pytorch_lightning.loggers import WandbLogger
-from torch import optim
-from torch.optim.lr_scheduler import ReduceLROnPlateau, OneCycleLR
+from torch.optim import Adam
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torchvision import transforms
 from torch.utils.data import DataLoader, random_split
 from torchvision.datasets import ImageFolder
@@ -28,14 +28,11 @@ class EffNet(LightningModule):
     def __init__(self, 
                 num_target_classes = 196,
                 backbone: str = 'efficientnet-b5',
-                batch_size: int = 16,
+                batch_size: int = 20,
                 lr: float = 1e-3,
                 wd: float = 0,
                 num_workers: int = 4,
                 factor: float = 0.5,
-                use_onecycle: bool = False,
-                pct_start: float = 0.3,
-                anneal_strategy: str = 'cos',
                 **kwargs):
         super().__init__()
         self.num_target_classes = num_target_classes
@@ -45,9 +42,6 @@ class EffNet(LightningModule):
         self.wd = wd
         self.num_workers = num_workers
         self.factor = factor
-        self.use_onecycle = use_onecycle
-        self.pct_start = pct_start
-        self.anneal_strategy = anneal_strategy
         self.save_hyperparameters()
 
         self.__build_model()
@@ -112,26 +106,13 @@ class EffNet(LightningModule):
 
     def configure_optimizers(self):
 
-        if self.use_onecycle == False:
-            optimizer = optim.Adam(self.parameters(),
-                lr=self.lr, weight_decay=self.wd)
-            lr_scheduler = {'scheduler': ReduceLROnPlateau(optimizer, factor=self.factor, patience=2)
+        optimizer = Adam(self.parameters(),
+            lr=self.lr, weight_decay=self.wd)
+        lr_scheduler = {'scheduler': ReduceLROnPlateau(optimizer, factor=self.factor, patience=2)
             ,'name': 'learning_rate',
             'monitor': 'val_acc'}
-            return [optimizer], [lr_scheduler]
-        
-        else:
-            optimizer = optim.Adam(self.parameters(),
-                lr=self.lr, weight_decay=self.wd)
-            
-            lr_scheduler = {'scheduler': OneCycleLR(optimizer,
-                            max_lr=self.lr,
-                            epochs=15, steps_per_epoch=1,
-                            pct_start=self.pct_start, anneal_strategy=self.anneal_strategy),
-                            'name': 'learning_rate',
-                            'monitor': 'val_acc'}
-
         return [optimizer], [lr_scheduler]
+        
 
     def setup(self, stage: str):
         data_dir = '../input/stanford-car-dataset-by-classes-folder/car_data/car_data'
@@ -139,7 +120,7 @@ class EffNet(LightningModule):
         mean, std = [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
         train_transforms = transforms.Compose([
             transforms.Resize((400, 400)),
-            transforms.RandomCrop(400, padding=20, padding_mode='reflect'),
+            transforms.RandomCrop(350),
             transforms.RandomHorizontalFlip(),
             transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.2),
             transforms.ToTensor(),
@@ -257,7 +238,7 @@ def main(args: Namespace):
     seed_everything(42)
     model = EffNet(**vars(args))
     
-    wandb_logger = WandbLogger(name='Eff', project="Cars")
+    wandb_logger = WandbLogger(name='EffN', project="Cars")
 
     checkpoint_cb = ModelCheckpoint(filepath = './cars-{epoch:02d}-{val_acc:.4f}',monitor='val_acc', mode='max')
     early = EarlyStopping(patience=args.patience, monitor='val_acc', mode='max')
