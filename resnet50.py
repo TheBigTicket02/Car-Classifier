@@ -258,7 +258,7 @@ def main():
     # ------------------------
     # 2 SET WANDB LOGGER
     # ------------------------
-    wandb.login(key='44b74d6614becfad4329893ea0144da65336bdbd')
+    wandb.login(key=os.environ.get('WANDB_API_KEY'))
     
     wandb_logger = WandbLogger(name='Test', project="Cars")
 
