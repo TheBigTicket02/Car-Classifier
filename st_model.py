@@ -125,7 +125,7 @@ class EffNet(LightningModule):
         mean, std = [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
         train_transforms = transforms.Compose([
             transforms.Resize((400, 400)),
-            transforms.RandomCrop(400, padding=20, padding_mode='reflect'),
+            transforms.RandomCrop(350),
             transforms.RandomHorizontalFlip(),
             transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.2),
             transforms.ToTensor(),
