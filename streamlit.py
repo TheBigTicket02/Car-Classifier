@@ -3,8 +3,10 @@ from PIL import Image
 import numpy as np
 import matplotlib.pyplot as plt
 import torchvision
+from captum.attr import GradientShap
 from captum.attr import Occlusion
 from captum.attr import visualization as viz
+from matplotlib.colors import LinearSegmentedColormap
 import joblib
 import torch
 import torch.nn.functional as F
@@ -220,7 +222,7 @@ def main(path):
     return model, pred_label_idx
 
 @st.cache
-def interpretation(model, input_img, transformed_img, pred_ix):
+def interpretation_occlusion(model, input_img, transformed_img, pred_ix):
     occlusion = Occlusion(model)
 
     attributions_occ = occlusion.attribute(input_img,
@@ -229,6 +231,23 @@ def interpretation(model, input_img, transformed_img, pred_ix):
                                        sliding_window_shapes=(3,30, 30),
                                        baselines=0)
     return attributions_occ
+
+@st.cache
+def interpretation_gradient_shap(model, input_img, pred_ix):
+    gradient_shap = GradientShap(model)
+
+    # Defining baseline distribution of images
+    rand_img_dist = torch.cat([input_img * 0, input_img * 1])
+
+    attributions_gs = gradient_shap.attribute(input_img,
+                                          baselines=rand_img_dist,
+                                          target=pred_ix)
+    return attributions_gs
+
+default_cmap = LinearSegmentedColormap.from_list('custom blue', 
+                                                 [(0, '#ffffff'),
+                                                  (0.25, '#000000'),
+                                                  (1, '#000000')], N=256)
 
 st.title('Car Model Classification')
 
@@ -253,11 +272,11 @@ if img:
 
     captum = st.sidebar.radio(
         label = 'It may take several minutes',
-        options=["Just Prediction", "Occlusion"]
+        options=["Just Prediction", "Occlusion", "GradientShap"]
     )
 
     if captum == 'Occlusion':
-        attributions = interpretation(model, input_img, transformed_img, pred_ix)
+        attributions = interpretation_occlusion(model, input_img, transformed_img, pred_ix)
         _ = viz.visualize_image_attr_multiple(np.transpose(attributions.squeeze().numpy(), (1,2,0)),
                                       np.transpose(transformed_img.squeeze().numpy(), (1,2,0)),
                                       ["original_image", "heat_map"],
@@ -265,6 +284,16 @@ if img:
                                       show_colorbar=True,
                                       outlier_perc=2,
                                      )
+        st.pyplot()
+
+    if captum == 'GradientShap':
+        attributions_gs = interpretation_gradient_shap(model, input_img, pred_ix)
+        _ = viz.visualize_image_attr_multiple(np.transpose(attributions_gs.squeeze().cpu().detach().numpy(), (1,2,0)),
+                                      np.transpose(transformed_img.squeeze().cpu().detach().numpy(), (1,2,0)),
+                                      ["original_image", "heat_map"],
+                                      ["all", "absolute_value"],
+                                      cmap=default_cmap,
+                                      show_colorbar=True)
         st.pyplot()
     
     if captum == 'Just prediction':
