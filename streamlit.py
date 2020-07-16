@@ -124,7 +124,7 @@ if img:
     st.sidebar.header("Model Interpretation Algorithm")
 
     captum = st.sidebar.radio(
-        label = 'It may take several minutes to run Occlusion',
+        label = 'It may take up to 20 minutes to run Occlusion',
         options=["Prediction", "Occlusion", "GradientShap","GuidedBackprop"]
     )
 
