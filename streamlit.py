@@ -12,6 +12,7 @@ import torch.nn.functional as F
 from torchvision import transforms
 import st_model
 
+@st.cache
 def classes():
     cl = joblib.load('classes.pkl')
     return cl
