@@ -3,7 +3,7 @@ from PIL import Image
 import numpy as np
 import matplotlib.pyplot as plt
 import torchvision
-from captum.attr import GradientShap, Occlusion, GuidedBackprop
+from captum.attr import GradientShap, Occlusion, DeepLift
 from captum.attr import visualization as viz
 from matplotlib.colors import LinearSegmentedColormap
 import joblib
@@ -64,19 +64,14 @@ def main(path):
     pred_label_idx = predict(path, model)
     return model, pred_label_idx
 
-def attribute_image_features(algorithm, model, input_img, pred_ix):
-    model.zero_grad()
-    tensor_attributions = algorithm.attribute(input_img,
-                                              target=pred_ix,
-                                             )
-    
-    return tensor_attributions
-
 @st.cache
-def interpretation_guidedbackprop(model, input_img):
-    gb = GuidedBackprop(model)
-    attr_gb = attribute_image_features(gb, model, input_img, pred_ix)
-    return attr_gb
+def interpretation_deeplift(model, input_img, pred_ix):
+    dl = DeepLift(model)
+    attributions_dl = dl.attribute(input_img,
+                                          baselines=input_img*0,
+                                          target=pred_ix)
+
+    return attributions_dl
 
 @st.cache
 def interpretation_occlusion(model, input_img, pred_ix):
@@ -124,11 +119,12 @@ if img:
     st.sidebar.header("Model Interpretation Algorithm")
 
     captum = st.sidebar.radio(
-        label = 'It may take up to 20 minutes to run Occlusion',
-        options=["Prediction", "Occlusion", "GradientShap","GuidedBackprop"]
+        label = 'Select Algorithm',
+        options=["Prediction", "GradientShap", "Occlusion", "DeepLift"]
     )
 
     if captum == 'Occlusion':
+        st.info('It may take up to 20 minutes to run Occlusion')
         attributions = interpretation_occlusion(model, input_img, pred_ix)
         _ = viz.visualize_image_attr_multiple(interpretation_show(attributions),
                                       interpretation_show(transformed_img),
@@ -149,12 +145,12 @@ if img:
                                       show_colorbar=True)
         st.pyplot()
     
-    if captum == "GuidedBackprop":
-        attributions_gb = interpretation_guidedbackprop(model, input_img)
+    if captum == "DeepLift":
+        attributions_gb = interpretation_deeplift(model, input_img, pred_ix)
         _ = viz.visualize_image_attr_multiple(interpretation_show(attributions_gb),
                                       interpretation_show(transformed_img),
                                       ["original_image", "heat_map"],
-                                      ["all", "positive"],
+                                      ["all", "all"],
                                       show_colorbar=True,
                                       outlier_perc=2,
                                      )
