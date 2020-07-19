@@ -9,26 +9,11 @@ ENV PYTHONUNBUFFERED 1
 
 RUN apt-get update && apt-get install -y python3 python3-pip sudo
 
-#RUN useradd -m alexey
+COPY . /app
 
-#RUN chown -R alexey:alexey /home/alexey
-
-COPY . /home/alexey/streamlit_cars/
-
-#USER alexey
-
-RUN cd /home/alexey/streamlit_cars/ && pip3 install -r requirements.txt
+RUN cd /app/ && pip3 install -r requirements.txt
 # make app directiry
-WORKDIR /home/alexey/streamlit_cars
-
-# copy requirements.txt
-#COPY requirements.txt ./requirements.txt
-
-# install dependencies
-#RUN pip3 install -r requirements.txt
-
-# copy all files over
-#COPY . .
+WORKDIR /app
 
 # cmd to launch app when container is run
 CMD streamlit run streamlit.py
