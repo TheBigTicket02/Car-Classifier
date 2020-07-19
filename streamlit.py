@@ -79,9 +79,9 @@ def interpretation_occlusion(model, input_img, pred_ix):
     occlusion = Occlusion(model)
 
     attributions_occ = occlusion.attribute(input_img,
-                                       strides = (3, 20, 20),
+                                       strides = (3, 8, 8),
                                        target=pred_ix,
-                                       sliding_window_shapes=(3,30, 30),
+                                       sliding_window_shapes=(3,15, 15),
                                        baselines=0)
     return attributions_occ
 
@@ -121,7 +121,7 @@ if img:
 
     captum = st.sidebar.radio(
         label = 'Select Algorithm',
-        options=["Prediction", "GradientShap", "Occlusion", "DeepLift"]
+        options=["Prediction", "GradientShap", "DeepLift", "Occlusion",]
     )
 
     if captum == 'Occlusion':
@@ -131,6 +131,14 @@ if img:
                                       interpretation_show(transformed_img),
                                       ["original_image", "heat_map"],
                                       ["all", "positive"],
+                                      show_colorbar=True,
+                                      outlier_perc=2,
+                                     )
+        st.pyplot()
+        _ = viz.visualize_image_attr_multiple(interpretation_show(attributions),
+                                      interpretation_show(transformed_img),
+                                      ["original_image", "heat_map"],
+                                      ["all", "all"],
                                       show_colorbar=True,
                                       outlier_perc=2,
                                      )
