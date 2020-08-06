@@ -8,7 +8,11 @@ from torch.nn import functional as F
 from pytorch_lightning.core.lightning import LightningModule
 from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning.metrics.functional.classification import accuracy
-from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping, LearningRateLogger
+from pytorch_lightning.callbacks import (
+    ModelCheckpoint,
+    EarlyStopping,
+    LearningRateLogger,
+)
 from pytorch_lightning.loggers import WandbLogger
 from torch.optim import Adam
 from torch.optim.lr_scheduler import ReduceLROnPlateau
@@ -21,22 +25,24 @@ import wandb
 from collections import OrderedDict
 from efficientnet_pytorch import EfficientNet
 
-wandb.login(key=os.environ.get('WANDB_API_KEY'))
+wandb.login(key=os.environ.get("WANDB_API_KEY"))
+
 
 class EffNet(LightningModule):
-
-    def __init__(self, 
-                num_target_classes = 196,
-                backbone: str = 'efficientnet-b5',
-                batch_size: int = 20,
-                lr: float = 4e-4,
-                wd: float = 0,
-                num_workers: int = 4,
-                factor: float = 0.5,
-                **kwargs):
+    def __init__(
+        self,
+        num_target_classes=196,
+        backbone: str = "efficientnet-b5",
+        batch_size: int = 20,
+        lr: float = 4e-4,
+        wd: float = 0,
+        num_workers: int = 4,
+        factor: float = 0.5,
+        **kwargs
+    ):
         super().__init__()
         self.num_target_classes = num_target_classes
-        self.backbone= backbone
+        self.backbone = backbone
         self.batch_size = batch_size
         self.lr = lr
         self.wd = wd
@@ -45,7 +51,7 @@ class EffNet(LightningModule):
         self.save_hyperparameters()
 
         self.__build_model()
-        
+
     def __build_model(self):
         self.net = EfficientNet.from_pretrained(self.backbone)
         in_features = self.net._fc.in_features
@@ -56,7 +62,7 @@ class EffNet(LightningModule):
     def forward(self, x):
 
         return self.net.forward(x)
-    
+
     def training_step(self, batch, batch_idx):
 
         x, y = batch
@@ -65,23 +71,26 @@ class EffNet(LightningModule):
         train_loss = F.cross_entropy(y_logits, y)
         acc = accuracy(y_logits, y)
 
-        tqdm_dict = {'train_loss': train_loss}
-        output = OrderedDict({'loss': train_loss,
-                               'train_acc': acc,
-                              'log': tqdm_dict,
-                             'progress_bar': tqdm_dict})
+        tqdm_dict = {"train_loss": train_loss}
+        output = OrderedDict(
+            {
+                "loss": train_loss,
+                "train_acc": acc,
+                "log": tqdm_dict,
+                "progress_bar": tqdm_dict,
+            }
+        )
 
         return output
 
     def training_epoch_end(self, outputs):
         """Compute and log training loss and accuracy at the epoch level."""
 
-        train_loss_mean = torch.stack([output['loss']
-                                       for output in outputs]).mean()
-        avg_acc = torch.stack([x['train_acc'] for x in outputs]).mean()
-        
-        tensorboard_logs = {'train_loss': train_loss_mean, 'train_acc': avg_acc}
-        return {'train_loss': train_loss_mean,  'log': tensorboard_logs}
+        train_loss_mean = torch.stack([output["loss"] for output in outputs]).mean()
+        avg_acc = torch.stack([x["train_acc"] for x in outputs]).mean()
+
+        tensorboard_logs = {"train_loss": train_loss_mean, "train_acc": avg_acc}
+        return {"train_loss": train_loss_mean, "log": tensorboard_logs}
 
     def validation_step(self, batch, batch_idx):
 
@@ -89,22 +98,23 @@ class EffNet(LightningModule):
         y_logits = self.forward(x)
 
         val_loss = F.cross_entropy(y_logits, y)
-        acc, acc2 = self.__accuracy(y_logits, y, topk=(1,2))
+        acc, acc2 = self.__accuracy(y_logits, y, topk=(1, 2))
 
-        return OrderedDict({'val_loss': val_loss, 'val_acc': acc,
-                            'top2_acc': acc2})
+        return OrderedDict({"val_loss": val_loss, "val_acc": acc, "top2_acc": acc2})
 
     def validation_epoch_end(self, outputs):
         """Compute and log validation loss and accuracy at the epoch level."""
 
-        val_loss_mean = torch.stack([output['val_loss']
-                                     for output in outputs]).mean()
-        avg_acc = torch.stack([x['val_acc'] for x in outputs]).mean()
-        avg_acc2 = torch.stack([x['top2_acc'] for x in outputs]).mean()
-        
-        tensorboard_logs = {'val_loss': val_loss_mean, 'val_acc': avg_acc,
-                            'top2_acc': avg_acc2}
-        return {'val_loss': val_loss_mean,  'log': tensorboard_logs}
+        val_loss_mean = torch.stack([output["val_loss"] for output in outputs]).mean()
+        avg_acc = torch.stack([x["val_acc"] for x in outputs]).mean()
+        avg_acc2 = torch.stack([x["top2_acc"] for x in outputs]).mean()
+
+        tensorboard_logs = {
+            "val_loss": val_loss_mean,
+            "val_acc": avg_acc,
+            "top2_acc": avg_acc2,
+        }
+        return {"val_loss": val_loss_mean, "log": tensorboard_logs}
 
     @classmethod
     def __accuracy(cls, output, target, topk=(1,)):
@@ -125,35 +135,43 @@ class EffNet(LightningModule):
 
     def configure_optimizers(self):
 
-        optimizer = Adam(self.parameters(),
-            lr=self.lr, weight_decay=self.wd)
-        lr_scheduler = {'scheduler': ReduceLROnPlateau(optimizer, factor=self.factor, 
-            patience=2, mode='max')
-            ,'name': 'learning_rate',
-            'monitor': 'val_acc'}
+        optimizer = Adam(self.parameters(), lr=self.lr, weight_decay=self.wd)
+        lr_scheduler = {
+            "scheduler": ReduceLROnPlateau(
+                optimizer, factor=self.factor, patience=2, mode="max"
+            ),
+            "name": "learning_rate",
+            "monitor": "val_acc",
+        }
         return [optimizer], [lr_scheduler]
 
     def setup(self, stage: str):
-        data_dir = '../input/stanford-car-dataset-by-classes-folder/car_data/car_data'
+        data_dir = "../input/stanford-car-dataset-by-classes-folder/car_data/car_data"
 
         mean, std = [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
-        train_transforms = transforms.Compose([
-            transforms.Resize((400, 400)),
-            transforms.RandomCrop(350),
-            transforms.RandomHorizontalFlip(),
-            transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.2),
-            transforms.ToTensor(),
-            transforms.Normalize(mean, std, inplace=True)
-        ])
-        train = ImageFolder(os.path.join(data_dir,'train'), train_transforms)
+        train_transforms = transforms.Compose(
+            [
+                transforms.Resize((400, 400)),
+                transforms.RandomCrop(350),
+                transforms.RandomHorizontalFlip(),
+                transforms.ColorJitter(
+                    brightness=0.3, contrast=0.3, saturation=0.3, hue=0.2
+                ),
+                transforms.ToTensor(),
+                transforms.Normalize(mean, std, inplace=True),
+            ]
+        )
+        train = ImageFolder(os.path.join(data_dir, "train"), train_transforms)
 
         # transform val
-        val_transforms = transforms.Compose([
-            transforms.Resize((400, 400)),
-            transforms.ToTensor(),
-            transforms.Normalize(mean, std, inplace=True)
-        ])
-        val = ImageFolder(os.path.join(data_dir,'test'), val_transforms)
+        val_transforms = transforms.Compose(
+            [
+                transforms.Resize((400, 400)),
+                transforms.ToTensor(),
+                transforms.Normalize(mean, std, inplace=True),
+            ]
+        )
+        val = ImageFolder(os.path.join(data_dir, "test"), val_transforms)
         valid, _ = random_split(val, [len(val), 0])
 
         # assign to use in dataloaders
@@ -161,63 +179,81 @@ class EffNet(LightningModule):
         self.val_dataset = valid
 
     def train_dataloader(self):
-        return DataLoader(dataset=self.train_dataset,
-                            batch_size=self.batch_size,
-                            num_workers=self.num_workers,
-                            shuffle=True,
-                            pin_memory=True)
+        return DataLoader(
+            dataset=self.train_dataset,
+            batch_size=self.batch_size,
+            num_workers=self.num_workers,
+            shuffle=True,
+            pin_memory=True,
+        )
 
     def val_dataloader(self):
-        return DataLoader(dataset=self.val_dataset,
-                            batch_size=self.batch_size,
-                            num_workers=self.num_workers,
-                            shuffle=False,
-                            pin_memory=True)
+        return DataLoader(
+            dataset=self.val_dataset,
+            batch_size=self.batch_size,
+            num_workers=self.num_workers,
+            shuffle=False,
+            pin_memory=True,
+        )
 
     @staticmethod
     def add_model_specific_args(parent_parser):
         parser = ArgumentParser(parents=[parent_parser])
-        parser.add_argument('--num_target_classes',
-                            default=196,
-                            type=int,
-                            metavar='NUM',
-                            help='Number of target classes')
-        parser.add_argument('--backbone',
-                            default='efficientnet-b5',
-                            type=str,
-                            metavar='BK',
-                            help='Name of the feature extractor')
-        parser.add_argument('--batch-size',
-                            default=16,
-                            type=int,
-                            metavar='B',
-                            help='batch size',
-                            dest='batch_size')
-        parser.add_argument('--lr',
-                            '--learning-rate',
-                            default=1e-3,
-                            type=float,
-                            metavar='LR',
-                            help='initial learning rate',
-                            dest='lr')
-        parser.add_argument('--weight_decay',
-                            default=0,
-                            type=float,
-                            metavar='WD',
-                            help='L2 Penalty',
-                            dest='weight_decay')
-        parser.add_argument('--num-workers',
-                            default=4,
-                            type=int,
-                            metavar='W',
-                            help='number of CPU workers',
-                            dest='num_workers')
-        parser.add_argument('--factor',
-                            default=0.5,
-                            type=float,
-                            metavar='FAC',
-                            help='Factor by which learning rate will be reduced',
-                            dest='factor')
+        parser.add_argument(
+            "--num_target_classes",
+            default=196,
+            type=int,
+            metavar="NUM",
+            help="Number of target classes",
+        )
+        parser.add_argument(
+            "--backbone",
+            default="efficientnet-b5",
+            type=str,
+            metavar="BK",
+            help="Name of the feature extractor",
+        )
+        parser.add_argument(
+            "--batch-size",
+            default=16,
+            type=int,
+            metavar="B",
+            help="batch size",
+            dest="batch_size",
+        )
+        parser.add_argument(
+            "--lr",
+            "--learning-rate",
+            default=1e-3,
+            type=float,
+            metavar="LR",
+            help="initial learning rate",
+            dest="lr",
+        )
+        parser.add_argument(
+            "--weight_decay",
+            default=0,
+            type=float,
+            metavar="WD",
+            help="L2 Penalty",
+            dest="weight_decay",
+        )
+        parser.add_argument(
+            "--num-workers",
+            default=4,
+            type=int,
+            metavar="W",
+            help="number of CPU workers",
+            dest="num_workers",
+        )
+        parser.add_argument(
+            "--factor",
+            default=0.5,
+            type=float,
+            metavar="FAC",
+            help="Factor by which learning rate will be reduced",
+            dest="factor",
+        )
 
         return parser
 
@@ -226,11 +262,13 @@ def main(args: Namespace):
 
     seed_everything(42)
     model = EffNet(**vars(args))
-    
-    wandb_logger = WandbLogger(name='EffN', project="Cars")
 
-    checkpoint_cb = ModelCheckpoint(filepath = './cars-{epoch:02d}-{val_acc:.4f}',monitor='val_acc', mode='max')
-    early = EarlyStopping(patience=args.patience, monitor='val_acc', mode='max')
+    wandb_logger = WandbLogger(name="EffN", project="Cars")
+
+    checkpoint_cb = ModelCheckpoint(
+        filepath="./cars-{epoch:02d}-{val_acc:.4f}", monitor="val_acc", mode="max"
+    )
+    early = EarlyStopping(patience=args.patience, monitor="val_acc", mode="max")
 
     trainer = Trainer(
         gpus=args.gpus,
@@ -245,30 +283,39 @@ def main(args: Namespace):
     )
 
     trainer.fit(model)
-    
+
     wandb.save(checkpoint_cb.best_model_path)
+
 
 def get_args() -> Namespace:
     parent_parser = ArgumentParser(add_help=False)
-    parent_parser.add_argument('--gpus', type=int, default=1,
-                               help='how many gpus')
-    parent_parser.add_argument('--use-16bit', dest='use_16bit', action='store_true',
-                               help='if true uses 16 bit precision')
-    parent_parser.add_argument('--epochs',
-                            default=15,
-                            type=int,
-                            metavar='N',
-                            help='total number of epochs',
-                            dest='nb_epochs')
-    parent_parser.add_argument('--patience',
-                            default=3,
-                            type=int,
-                            metavar='ES',
-                            help='early stopping',
-                            dest='patience')
- 
+    parent_parser.add_argument("--gpus", type=int, default=1, help="how many gpus")
+    parent_parser.add_argument(
+        "--use-16bit",
+        dest="use_16bit",
+        action="store_true",
+        help="if true uses 16 bit precision",
+    )
+    parent_parser.add_argument(
+        "--epochs",
+        default=15,
+        type=int,
+        metavar="N",
+        help="total number of epochs",
+        dest="nb_epochs",
+    )
+    parent_parser.add_argument(
+        "--patience",
+        default=3,
+        type=int,
+        metavar="ES",
+        help="early stopping",
+        dest="patience",
+    )
+
     parser = EffNet.add_model_specific_args(parent_parser)
     return parser.parse_args()
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main(get_args())
