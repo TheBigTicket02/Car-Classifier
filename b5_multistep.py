@@ -8,7 +8,11 @@ from torch.nn import functional as F
 from pytorch_lightning.core.lightning import LightningModule
 from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning.metrics.functional.classification import accuracy
-from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping, LearningRateLogger
+from pytorch_lightning.callbacks import (
+    ModelCheckpoint,
+    EarlyStopping,
+    LearningRateLogger,
+)
 from pytorch_lightning.loggers import WandbLogger
 from torch.optim import Adam
 from torch.optim.lr_scheduler import ReduceLROnPlateau, MultiStepLR
@@ -27,6 +31,7 @@ BN_TYPES = (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)
 
 #  --- Utility functions ---
 
+
 def _make_trainable(module: Module) -> None:
     """Unfreezes a given module.
 
@@ -38,8 +43,7 @@ def _make_trainable(module: Module) -> None:
     module.train()
 
 
-def _recursive_freeze(module: Module,
-                      train_bn: bool = True) -> None:
+def _recursive_freeze(module: Module, train_bn: bool = True) -> None:
     """Freezes the layers of a given module.
 
     Args:
@@ -60,9 +64,7 @@ def _recursive_freeze(module: Module,
             _recursive_freeze(module=child, train_bn=train_bn)
 
 
-def freeze(module: Module,
-           n: Optional[int] = None,
-           train_bn: bool = True) -> None:
+def freeze(module: Module, n: Optional[int] = None, train_bn: bool = True) -> None:
     """Freezes the layers up to index n (if n is not None).
 
     Args:
@@ -80,25 +82,27 @@ def freeze(module: Module,
     for child in children[n_max:]:
         _make_trainable(module=child)
 
-class EffNet(LightningModule):
 
-    def __init__(self, 
-                num_target_classes = 196,
-                backbone: str = 'efficientnet-b5',
-                hidden: int = 1024,
-                dropout: float = 0.3, 
-                train_bn: bool = True,
-                milestones: tuple = (4, 9),
-                batch_size: int = 20,
-                lr: float = 1e-3,
-                lr_scheduler_gamma: float = 3e-1,
-                wd: float = 1e-6,
-                factor: float = 0.5,
-                num_workers: int = 4,
-                **kwargs):
+class EffNet(LightningModule):
+    def __init__(
+        self,
+        num_target_classes=196,
+        backbone: str = "efficientnet-b5",
+        hidden: int = 1024,
+        dropout: float = 0.3,
+        train_bn: bool = True,
+        milestones: tuple = (4, 9),
+        batch_size: int = 20,
+        lr: float = 1e-3,
+        lr_scheduler_gamma: float = 3e-1,
+        wd: float = 1e-6,
+        factor: float = 0.5,
+        num_workers: int = 4,
+        **kwargs
+    ):
         super().__init__()
         self.num_target_classes = num_target_classes
-        self.backbone= backbone
+        self.backbone = backbone
         self.hidden = hidden
         self.dropout = dropout
         self.batch_size = batch_size
@@ -112,44 +116,41 @@ class EffNet(LightningModule):
         self.save_hyperparameters()
 
         self.__build_model()
-        
+
     def __build_model(self):
         self.net = EfficientNet.from_pretrained(self.backbone)
-        
+
         _layers = list(self.net.children())[:1]
         self.feature_extractor = nn.Sequential(*_layers)
-        #freeze(module=self.feature_extractor, train_bn=self.train_bn)
+        # freeze(module=self.feature_extractor, train_bn=self.train_bn)
 
         in_features = self.net._fc.in_features
-        _fc_layers = [nn.Linear(in_features, self.hidden),
-                    nn.ReLU(),
-                    nn.Dropout(self.dropout),
-                    nn.Linear(self.hidden, self.num_target_classes)]
+        _fc_layers = [
+            nn.Linear(in_features, self.hidden),
+            nn.ReLU(),
+            nn.Dropout(self.dropout),
+            nn.Linear(self.hidden, self.num_target_classes),
+        ]
         self.net._fc = nn.Sequential(*_fc_layers)
 
     def forward(self, x):
         return self.net.forward(x)
-    
+
     def train(self, mode=True):
         super().train(mode=mode)
 
         epoch = self.current_epoch
         if epoch < self.milestones[0] and mode:
             # feature extractor is frozen (except for BatchNorm layers)
-            freeze(module=self.feature_extractor,
-                   train_bn=self.train_bn)
+            freeze(module=self.feature_extractor, train_bn=self.train_bn)
 
-        elif self.milestones[0] <= epoch < self.milestones[1]-3 and mode:
+        elif self.milestones[0] <= epoch < self.milestones[1] - 3 and mode:
             # Unfreeze last two layers of the feature extractor
-            freeze(module=self.feature_extractor,
-                   n=-2,
-                   train_bn=self.train_bn)
+            freeze(module=self.feature_extractor, n=-2, train_bn=self.train_bn)
 
-        elif self.milestones[1]-3 <= epoch < self.milestones[1] and mode:
+        elif self.milestones[1] - 3 <= epoch < self.milestones[1] and mode:
             # Unfreeze next six layers
-            freeze(module=self.feature_extractor,
-                   n=-8,
-                   train_bn=self.train_bn)
+            freeze(module=self.feature_extractor, n=-8, train_bn=self.train_bn)
 
     def training_step(self, batch, batch_idx):
 
@@ -159,24 +160,27 @@ class EffNet(LightningModule):
         train_loss = F.cross_entropy(y_logits, y)
         acc = accuracy(y_logits, y)
 
-        tqdm_dict = {'train_loss': train_loss}
-        output = OrderedDict({'loss': train_loss,
-                               'train_acc': acc,
-                              'log': tqdm_dict,
-                             'progress_bar': tqdm_dict})
+        tqdm_dict = {"train_loss": train_loss}
+        output = OrderedDict(
+            {
+                "loss": train_loss,
+                "train_acc": acc,
+                "log": tqdm_dict,
+                "progress_bar": tqdm_dict,
+            }
+        )
 
         return output
 
     def training_epoch_end(self, outputs):
         """Compute and log training loss and accuracy at the epoch level."""
 
-        train_loss_mean = torch.stack([output['loss']
-                                       for output in outputs]).mean()
-        avg_acc = torch.stack([x['train_acc'] for x in outputs]).mean()
-        
-        tensorboard_logs = {'train_loss': train_loss_mean, 'train_acc': avg_acc}
+        train_loss_mean = torch.stack([output["loss"] for output in outputs]).mean()
+        avg_acc = torch.stack([x["train_acc"] for x in outputs]).mean()
 
-        return {'train_loss': train_loss_mean,  'log': tensorboard_logs}
+        tensorboard_logs = {"train_loss": train_loss_mean, "train_acc": avg_acc}
+
+        return {"train_loss": train_loss_mean, "log": tensorboard_logs}
 
     def validation_step(self, batch, batch_idx):
 
@@ -184,23 +188,23 @@ class EffNet(LightningModule):
         y_logits = self.forward(x)
 
         val_loss = F.cross_entropy(y_logits, y)
-        acc, acc2 = self.__accuracy(y_logits, y, topk=(1,2))
+        acc, acc2 = self.__accuracy(y_logits, y, topk=(1, 2))
 
-        return OrderedDict({'val_loss': val_loss, 'val_acc': acc,
-                            'top2_acc': acc2})
+        return OrderedDict({"val_loss": val_loss, "val_acc": acc, "top2_acc": acc2})
 
     def validation_epoch_end(self, outputs):
         """Compute and log validation loss and accuracy at the epoch level."""
 
-        val_loss_mean = torch.stack([output['val_loss']
-                                     for output in outputs]).mean()
-        avg_acc = torch.stack([x['val_acc'] for x in outputs]).mean()
-        avg_acc2 = torch.stack([x['top2_acc'] for x in outputs]).mean()
-        
-        tensorboard_logs = {'val_loss': val_loss_mean, 'val_acc': avg_acc,
-                            'top2_acc': avg_acc2}
-        return {'val_loss': val_loss_mean,  'log': tensorboard_logs}
+        val_loss_mean = torch.stack([output["val_loss"] for output in outputs]).mean()
+        avg_acc = torch.stack([x["val_acc"] for x in outputs]).mean()
+        avg_acc2 = torch.stack([x["top2_acc"] for x in outputs]).mean()
 
+        tensorboard_logs = {
+            "val_loss": val_loss_mean,
+            "val_acc": avg_acc,
+            "top2_acc": avg_acc2,
+        }
+        return {"val_loss": val_loss_mean, "log": tensorboard_logs}
 
     @classmethod
     def __accuracy(cls, output, target, topk=(1,)):
@@ -217,53 +221,63 @@ class EffNet(LightningModule):
             for k in topk:
                 correct_k = correct[:k].view(-1).float().sum(0, keepdim=True)
                 res.append(correct_k.mul_(1.0 / batch_size))
-            return res    
+            return res
 
     def configure_optimizers(self):
-        
+
         if self.current_epoch <= self.milestones[1]:
 
-            optimizer = Adam(filter(lambda p: p.requires_grad,
-                                      self.parameters()),
-                               lr=self.lr)
+            optimizer = Adam(
+                filter(lambda p: p.requires_grad, self.parameters()), lr=self.lr
+            )
 
-            lr_scheduler = {'scheduler': MultiStepLR(optimizer,
-                                milestones=self.milestones,
-                                gamma=self.lr_scheduler_gamma),
-                            'name': 'learning_rate' }
+            lr_scheduler = {
+                "scheduler": MultiStepLR(
+                    optimizer, milestones=self.milestones, gamma=self.lr_scheduler_gamma
+                ),
+                "name": "learning_rate",
+            }
 
             return [optimizer], [lr_scheduler]
 
         else:
-            optimizer = Adam(self.parameters(),
-                lr=self.lr, weight_decay=self.wd)
-            lr_scheduler = {'scheduler': ReduceLROnPlateau(optimizer, factor=self.factor, 
-            patience=2, mode='max'),'name': 'learning_rate',
-            'monitor': 'val_acc'}
+            optimizer = Adam(self.parameters(), lr=self.lr, weight_decay=self.wd)
+            lr_scheduler = {
+                "scheduler": ReduceLROnPlateau(
+                    optimizer, factor=self.factor, patience=2, mode="max"
+                ),
+                "name": "learning_rate",
+                "monitor": "val_acc",
+            }
             return [optimizer], [lr_scheduler]
-    
 
     def setup(self, stage: str):
-        data_dir = '../input/stanford-car-dataset-by-classes-folder/car_data/car_data'
+        data_dir = "../input/stanford-car-dataset-by-classes-folder/car_data/car_data"
 
         mean, std = [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
-        train_transforms = transforms.Compose([
-            transforms.Resize((400, 400)),
-            transforms.RandomCrop(400, padding=20, padding_mode='reflect'),
-            transforms.RandomHorizontalFlip(),
-            transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.1),
-            transforms.ToTensor(),
-            transforms.Normalize(mean, std, inplace=True)
-        ])
-        train = ImageFolder(os.path.join(data_dir,'train'), train_transforms)
+        train_transforms = transforms.Compose(
+            [
+                transforms.Resize((400, 400)),
+                transforms.RandomCrop(400, padding=20, padding_mode="reflect"),
+                transforms.RandomHorizontalFlip(),
+                transforms.ColorJitter(
+                    brightness=0.3, contrast=0.3, saturation=0.3, hue=0.1
+                ),
+                transforms.ToTensor(),
+                transforms.Normalize(mean, std, inplace=True),
+            ]
+        )
+        train = ImageFolder(os.path.join(data_dir, "train"), train_transforms)
 
         # transform val
-        val_transforms = transforms.Compose([
-            transforms.Resize((400, 400)),
-            transforms.ToTensor(),
-            transforms.Normalize(mean, std, inplace=True)
-        ])
-        val = ImageFolder(os.path.join(data_dir,'test'), val_transforms)
+        val_transforms = transforms.Compose(
+            [
+                transforms.Resize((400, 400)),
+                transforms.ToTensor(),
+                transforms.Normalize(mean, std, inplace=True),
+            ]
+        )
+        val = ImageFolder(os.path.join(data_dir, "test"), val_transforms)
         valid, _ = random_split(val, [len(val), 0])
 
         # assign to use in dataloaders
@@ -271,19 +285,25 @@ class EffNet(LightningModule):
         self.val_dataset = valid
 
     def train_dataloader(self):
-        return DataLoader(dataset=self.train_dataset,
-                            batch_size=self.batch_size,
-                            num_workers=self.num_workers,
-                            shuffle=True,
-                            pin_memory=True)
+        return DataLoader(
+            dataset=self.train_dataset,
+            batch_size=self.batch_size,
+            num_workers=self.num_workers,
+            shuffle=True,
+            pin_memory=True,
+        )
 
     def val_dataloader(self):
-        return DataLoader(dataset=self.val_dataset,
-                            batch_size=self.batch_size,
-                            num_workers=self.num_workers,
-                            shuffle=False,
-                            pin_memory=True)
-'''
+        return DataLoader(
+            dataset=self.val_dataset,
+            batch_size=self.batch_size,
+            num_workers=self.num_workers,
+            shuffle=False,
+            pin_memory=True,
+        )
+
+
+"""
     @staticmethod
     def add_model_specific_args():
         parser = ArgumentParser()
@@ -360,21 +380,24 @@ class EffNet(LightningModule):
                             metavar='AS',
                             help='Cosine Anneling')
         return parser
-'''
+"""
 
-wandb.login(key=os.environ.get('WANDB_API_KEY'))
+wandb.login(key=os.environ.get("WANDB_API_KEY"))
+
 
 def main():
 
     seed_everything(42)
     model = EffNet()
-    
-    wandb_logger = WandbLogger(name='Best', project="Cars")
-    # optional: log model topology
-    #wandb_logger.watch(model.net)
 
-    checkpoint_cb = ModelCheckpoint(filepath = './cars-{epoch:02d}-{val_acc:.4f}',monitor='val_acc', mode='max')
-    early = EarlyStopping(patience=5, monitor='val_acc', mode='max')
+    wandb_logger = WandbLogger(name="Best", project="Cars")
+    # optional: log model topology
+    # wandb_logger.watch(model.net)
+
+    checkpoint_cb = ModelCheckpoint(
+        filepath="./cars-{epoch:02d}-{val_acc:.4f}", monitor="val_acc", mode="max"
+    )
+    early = EarlyStopping(patience=5, monitor="val_acc", mode="max")
 
     trainer = Trainer(
         gpus=1,
@@ -389,12 +412,13 @@ def main():
     )
 
     trainer.fit(model)
-    
+
     wandb.save(checkpoint_cb.best_model_path)
 
-#def get_args() -> Namespace:
+
+# def get_args() -> Namespace:
 #    parser = EffNet.add_model_specific_args()
 #    return parser.parse_args()
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
