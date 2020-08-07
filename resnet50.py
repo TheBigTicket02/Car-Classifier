@@ -79,9 +79,6 @@ def freeze(module: Module, n: Optional[int] = None, train_bn: bool = True) -> No
         _make_trainable(module=child)
 
 
-wandb.login(key="44b74d6614becfad4329893ea0144da65336bdbd")
-
-
 class ResNet50(LightningModule):
     def __init__(
         self,
