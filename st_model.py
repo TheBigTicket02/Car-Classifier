@@ -10,11 +10,7 @@ from torch.nn import functional as F
 from pytorch_lightning.core.lightning import LightningModule
 from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning.metrics.functional.classification import accuracy
-from pytorch_lightning.callbacks import (
-    ModelCheckpoint,
-    EarlyStopping,
-    LearningRateLogger,
-)
+
 from pytorch_lightning.loggers import WandbLogger
 from torch import optim
 from torch.optim.lr_scheduler import ReduceLROnPlateau

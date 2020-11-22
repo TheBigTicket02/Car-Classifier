@@ -12,6 +12,7 @@ import torch.nn.functional as F
 from torchvision import transforms
 import st_model
 
+st.set_option('deprecation.showfileUploaderEncoding', False)
 
 @st.cache
 def classes():
