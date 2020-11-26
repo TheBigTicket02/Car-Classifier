@@ -15,6 +15,6 @@
 | ------------- |:-------------:|:-------:|
 | Resnet50      | 89.14         | 95.11   |
 | EffNetB5 (I)  | 93.75         | 97.82   |
-| EffNetB5 (I)  | 90.97         | 96.34   |
+| EffNetB5 (II) | 90.97         | 96.34   |
 
 [Detailed notebook](https://www.kaggle.com/alexalex02/car-classifier-93-75-inference-web-app)
