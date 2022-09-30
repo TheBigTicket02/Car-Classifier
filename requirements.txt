@@ -2,6 +2,6 @@ torch==1.5.1
 torchvision==0.6.1
 captum==0.2.0
 efficientnet-pytorch==0.6.3
-joblib==0.15.1
+joblib==1.2.0
 pytorch-lightning==0.8.5
 streamlit==0.62.1
